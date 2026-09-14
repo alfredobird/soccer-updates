@@ -356,9 +356,11 @@ async def get_standings(page) -> dict:
     log("Loading standings page")
     await page.goto(STANDINGS_URL, wait_until="domcontentloaded")
     await settle(page, 2500)
-    await choose(page, TOURNAMENT)
-    await choose(page, DIVISION)
-    await choose(page, GROUP)
+    picked = [
+        await choose(page, TOURNAMENT) or TOURNAMENT,
+        await choose(page, DIVISION) or DIVISION,
+        await choose(page, GROUP) or GROUP,
+    ]
     await settle(page, 1200)
     await dump(page, "standings")
 
@@ -380,7 +382,7 @@ async def get_standings(page) -> dict:
     # dedupe() sorts by width; restore the site's own ordering.
     table.sort(key=lambda r: rows.index(r) if r in rows else 0)
     log(f"  {len(table)} teams in the table")
-    return {"headers": headers, "rows": table}
+    return {"headers": headers, "rows": table, "context": picked}
 
 
 async def scrape():
@@ -433,6 +435,9 @@ def standings_text(standings: dict, t: dict) -> str:
         for i in range(len(headers) or max(len(r) for r in rows))
     ]
     out = [t["table"]]
+    ctx = [c for c in (standings.get("context") or []) if c]
+    if ctx:
+        out.append("  " + " / ".join(ctx))
     if headers:
         out.append("  " + "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
     for r in rows:
@@ -483,6 +488,11 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
         else:
             body = f"<p class=empty>{esc(t['none'])}</p>"
         cards.append(body)
+
+    context = [c for c in (standings.get("context") or []) if c]
+    context_html = (
+        f"<p class=sub>{esc(' · '.join(context))}</p>" if context else ""
+    )
 
     thead = ""
     tbody = ""
@@ -543,6 +553,10 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
   .k {{ flex:0 0 34%; color:#5d7080; font-size:14px; }}
   .v {{ flex:1; font-variant-numeric:tabular-nums; }}
   .empty {{ color:#5d7080; margin:8px 0; }}
+  .sub {{
+    color:#5d7080; font-size:12.5px; line-height:1.4;
+    margin:-6px 0 12px;
+  }}
   .scroll {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
   table {{ border-collapse:collapse; width:100%; font-size:14px; }}
   th,td {{
@@ -567,7 +581,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     body {{ background:#0b1b2b; color:#e8eef4; }}
     section {{ background:#14293c; box-shadow:none; }}
     .row,th,td {{ border-top-color:#1e3752; }}
-    .k,.stamp,.empty,th,footer a {{ color:#90a6b8; }}
+    .k,.stamp,.empty,.sub,th,footer a {{ color:#90a6b8; }}
     .nav button {{ background:#1e3752; color:#e8eef4; }}
     tr.mine td {{ background:#1d3f63; }}
     .send {{ background:#2f6fed; }}
@@ -589,6 +603,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 
   <section>
     <h2>{esc(t['table'])}</h2>
+    {context_html}
     <div class=scroll>
       <table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>
     </div>
