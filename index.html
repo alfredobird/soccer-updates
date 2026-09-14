@@ -15,7 +15,9 @@
   }
   main { max-width:560px; margin:0 auto; }
   h1 { font-size:22px; margin:0 0 4px; letter-spacing:-.01em; }
-  .stamp { color:#5d7080; font-size:14px; margin:0 0 22px; }
+  .stamp {
+    color:#5d7080; font-size:12.5px; line-height:1.4; margin:0 0 22px;
+  }
   section {
     background:#fff; border-radius:14px; padding:14px 16px;
     margin-bottom:16px; box-shadow:0 1px 3px rgba(16,32,46,.10);
@@ -38,8 +40,7 @@
   .v { flex:1; font-variant-numeric:tabular-nums; }
   .empty { color:#5d7080; margin:8px 0; }
   .sub {
-    color:#5d7080; font-size:12.5px; line-height:1.4;
-    margin:-6px 0 12px;
+    color:#5d7080; font-size:12.5px; line-height:1.4; margin:2px 0 2px;
   }
   .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   table { border-collapse:collapse; width:100%; font-size:14px; }
@@ -59,21 +60,30 @@
     padding:14px 18px; font-size:16px; font-weight:500; margin-bottom:16px;
   }
   .send:active { opacity:.75; }
+  .actions { display:flex; gap:10px; margin-bottom:16px; }
+  .actions .send { flex:1 1 0; margin-bottom:0; }
+  .sharelabel {
+    font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+    color:#5d7080; font-weight:600; margin:22px 0 10px;
+  }
+  .send.wa { background:#1f9d5b; }
   footer { text-align:center; font-size:13px; }
   footer a { color:#5d7080; }
   @media (prefers-color-scheme: dark) {
     body { background:#0b1b2b; color:#e8eef4; }
     section { background:#14293c; box-shadow:none; }
     .row,th,td { border-top-color:#1e3752; }
-    .k,.stamp,.empty,.sub,th,footer a { color:#90a6b8; }
+    .k,.stamp,.empty,.sub,.sharelabel,th,footer a { color:#90a6b8; }
     .nav button { background:#1e3752; color:#e8eef4; }
     tr.mine td { background:#1d3f63; }
     .send { background:#2f6fed; }
+    .send.wa { background:#1f9d5b; }
   }
 </style>
 <main>
   <h1>Surf Guaynabo U10 Black</h1>
-  <p class=stamp>Actualizado: 14 de septiembre de 2026, 1:29 p. m.</p>
+  <p class=sub>Torneo Championship · TC 2026 U10 DIVISION 2 - Fase 1 · GRUPO A</p>
+  <p class=stamp>Actualizado: 14 de septiembre de 2026, 1:42 p. m.</p>
 
   <section>
     <h2>Partido</h2>
@@ -87,23 +97,27 @@
 
   <section>
     <h2>Tabla de posiciones</h2>
-    <p class=sub>Torneo Championship · TC 2026 U10 DIVISION 2 - Fase 1 · GRUPO A</p>
     <div class=scroll>
       <table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>CAPARRA U10 ROJO</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>7</td><td>1</td><td>6</td></tr><tr class=mine><td>2</td><td>SURF GUAYNABO U10 2016 Black</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>2</td><td>1</td></tr><tr><td>3</td><td>CATALA FC U10 2016 VERMELL</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>2</td><td>3</td><td>-1</td></tr><tr><td>4</td><td>MIRABELLI U10 Encantada NEGRO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>7</td><td>-6</td></tr></tbody></table>
     </div>
   </section>
 
-  <a class=send id=share href="#">Compartir por correo</a>
+  <p class=sharelabel>Compartir vía:</p>
+  <div class=actions>
+    <a class="send wa" id=wa href="#">WhatsApp</a>
+    <a class=send id=share href="#">Email</a>
+  </div>
   <footer><a href="https://ystpr.com/itinerario">ystpr.com</a></footer>
 </main>
 <script>
-const D = {"labels": ["Jornada 1"], "cards": ["<div class=row><span class=k>Día</span><span class=v>9/13/2026</span></div><div class=row><span class=k>Hora</span><span class=v>01:30 p. m.</span></div><div class=row><span class=k>Partido</span><span class=v>SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL</span></div><div class=row><span class=k>Sede</span><span class=v>TORRIMAR</span></div><div class=row><span class=k>Cancha</span><span class=v>ROJA</span></div><div class=row><span class=k>Estado</span><span class=v>Finalizado</span></div>"], "texts": ["Jornada 1\n  Día      9/13/2026\n  Hora     01:30 p. m.\n  Partido  SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL\n  Sede     TORRIMAR\n  Cancha   ROJA\n  Estado   Finalizado"], "start": 0, "head": "Surf Guaynabo U10 Black\nActualizado: 14 de septiembre de 2026, 1:29 p. m.\n", "standings": "Tabla de posiciones\n  Torneo Championship / TC 2026 U10 DIVISION 2 - Fase 1 / GRUPO A\n  Posición  Equipo                         PTS  PJ  PG  PP  PE  GF  GC  DIF\n  1         CAPARRA U10 ROJO               3    1   1   0   0   7   1   6  \n  2         SURF GUAYNABO U10 2016 Black   3    1   1   0   0   3   2   1  \n  3         CATALA FC U10 2016 VERMELL     0    1   0   1   0   2   3   -1 \n  4         MIRABELLI U10 Encantada NEGRO  0    1   0   1   0   1   7   -6 ", "subject": "Surf Guaynabo U10 Black - Actualizado: 14 de septiembre de 2026, 1:29 p. m."};
+const D = {"labels": ["Jornada 1"], "cards": ["<div class=row><span class=k>Día</span><span class=v>9/13/2026</span></div><div class=row><span class=k>Hora</span><span class=v>01:30 p. m.</span></div><div class=row><span class=k>Partido</span><span class=v>SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL</span></div><div class=row><span class=k>Sede</span><span class=v>TORRIMAR</span></div><div class=row><span class=k>Cancha</span><span class=v>ROJA</span></div><div class=row><span class=k>Estado</span><span class=v>Finalizado</span></div>"], "texts": ["Jornada 1\n  Día      9/13/2026\n  Hora     01:30 p. m.\n  Partido  SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL\n  Sede     TORRIMAR\n  Cancha   ROJA\n  Estado   Finalizado"], "start": 0, "head": "Surf Guaynabo U10 Black\nTorneo Championship / TC 2026 U10 DIVISION 2 - Fase 1 / GRUPO A\nActualizado: 14 de septiembre de 2026, 1:42 p. m.\n", "standings": "Tabla de posiciones\n  Posición  Equipo                         PTS  PJ  PG  PP  PE  GF  GC  DIF\n  1         CAPARRA U10 ROJO               3    1   1   0   0   7   1   6  \n  2         SURF GUAYNABO U10 2016 Black   3    1   1   0   0   3   2   1  \n  3         CATALA FC U10 2016 VERMELL     0    1   0   1   0   2   3   -1 \n  4         MIRABELLI U10 Encantada NEGRO  0    1   0   1   0   1   7   -6 ", "subject": "Surf Guaynabo U10 Black - Actualizado: 14 de septiembre de 2026, 1:42 p. m."};
 let i = D.start;
 const card = document.getElementById('card');
 const label = document.getElementById('jlabel');
 const prev = document.getElementById('prev');
 const next = document.getElementById('next');
 const share = document.getElementById('share');
+const wa = document.getElementById('wa');
 
 function render() {
   label.textContent = D.labels[i] || '';
@@ -113,6 +127,8 @@ function render() {
   const body = D.head + '\n' + D.texts[i] + '\n\n' + D.standings + '\n';
   share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
              + '&body=' + encodeURIComponent(body);
+  // Triple backticks keep the table's columns aligned in WhatsApp.
+  wa.href = 'https://wa.me/?text=' + encodeURIComponent('```\n' + body + '```');
 }
 prev.onclick = () => { if (i > 0) { i--; render(); } };
 next.onclick = () => { if (i < D.labels.length - 1) { i++; render(); } };
