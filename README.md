@@ -23,10 +23,23 @@ Pages serves the result.
 - **Compartir vía** builds a short plain-text summary of whatever is on
   screen and hands it to WhatsApp, Messages or email. Nothing is ever sent
   automatically.
-- A light/dark toggle sits top right. It follows the phone's setting until
-  you override it, then remembers the choice.
+- Two buttons sit top right. **Light/dark** follows the phone's setting until
+  you override it. **EN/ES** switches the page language. Both choices are
+  remembered separately on that device.
 
 On iOS, Share then Add to Home Screen gives it an app icon.
+
+### About the language toggle
+
+Both languages are built into the page at scrape time, so switching is instant
+and needs no network. Only the league's own vocabulary is translated, word by
+word, keeping the original capitalisation: `Fecha` to `Date`, `JORNADA 5` to
+`MATCHDAY 5`, `Finalizado` to `Final`, `PJ` to `GP`. Anything not in that
+dictionary passes through untouched, which is what keeps club names and venues
+like `TORRIMAR ROJA` intact. The dictionaries are `TERMS` and `VALUES` near the
+top of `main.py`; add a pair if the league starts using a word it misses.
+
+The share text follows whichever language is on screen.
 
 ## Email alerts
 
@@ -43,7 +56,10 @@ Add three repo secrets: `SMTP_USER` (a Gmail address), `SMTP_PASS` (a Google
 app password from myaccount.google.com/apppasswords, not your normal password,
 and it needs 2-Step Verification switched on), and `EMAIL_TO` (recipients,
 comma-separated). Leave them unset and the page still builds, it just never
-emails.
+emails. `SMTP_HOST` and `SMTP_PORT` are optional and default to Gmail.
+
+Alerts are written in whatever `LANG_OUT` is set to, since an email has no
+toggle to click. The page's own toggle doesn't affect them.
 
 `state.json` holds the last known jornada list and group order. It's committed
 so it survives between runs. Don't delete it, or the next run treats itself as
@@ -60,7 +76,8 @@ a first run.
 
 ## Setup
 
-1. The repo must be **public** for free GitHub Pages.
+1. The repo must be **public**. GitHub Pages only serves private repos on a
+   paid plan, so making it private breaks the site.
 2. Settings > Pages > Source: *Deploy from a branch*, branch `main`, folder `/ (root)`.
 3. Settings > Actions > General > Workflow permissions: **Read and write**.
 4. Actions tab > soccer-updates > Run workflow.
@@ -77,8 +94,9 @@ Set as repository variables, or edit the constants at the top of `main.py`.
 | `GROUP` | `Grupo A` |
 | `NICK` | page title |
 | `SUBTITLE` | line under the title. A label, not scraped |
-| `LANG_OUT` | `es`, or `en` |
-| `PAGE_URL` | only if the Pages URL isn't the default shape |
+| `LANG_OUT` | `es` or `en`. The language the page opens in, and the only one used for email alerts |
+| `MAX_JORNADAS` | `40`. Cap on how many jornadas to walk |
+| `PAGE_URL` | only if the Pages URL isn't the default shape, e.g. a custom domain |
 
 Dropdown matching ignores punctuation, accents and spacing, so only the words
 have to line up. The division carries the season year while the team name
