@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 """
-Scrapes ystpr.com for one team's next match and league position, then emails
-a summary. Sends only when something has changed since the last run.
+Scrapes ystpr.com for one team's fixtures across every jornada, plus the full
+group standings, and writes a static index.html for GitHub Pages.
 
-Run with no delivery credentials set to preview the message instead of sending.
+No email is sent. The page carries a share button that opens a mail client.
 """
 
 import asyncio
 import json
 import os
 import re
-import smtplib
 import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from pathlib import Path
 
-import requests
 from playwright.async_api import async_playwright
 
 # ---------------------------------------------------------------- config
@@ -31,16 +28,21 @@ SCHEDULE_URL = "https://ystpr.com/itinerario"
 STANDINGS_URL = "https://ystpr.com/posiciones"
 
 NICK = os.environ.get("NICK", "Surf Guaynabo U10 Black")
-LANG = os.environ.get("LANG_OUT", "es")  # "es" or "en"
+LANG = os.environ.get("LANG_OUT", "es")
+MAX_JORNADAS = int(os.environ.get("MAX_JORNADAS", "40"))
 
-STATE = Path("state.json")
 DEBUG = Path("debug")
+AST = timezone(timedelta(hours=-4))  # Puerto Rico, no DST
+
+MESES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
 
 # ---------------------------------------------------------------- helpers
 
 
 def norm(s: str) -> str:
-    """Lowercase, strip accents, drop all punctuation. For fuzzy matching."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c))
     s = re.sub(r"[^a-zA-Z0-9]+", " ", s)
@@ -48,10 +50,6 @@ def norm(s: str) -> str:
 
 
 def matches(option: str, wanted: str) -> bool:
-    """True when every word of `wanted` appears in `option`.
-
-    Punctuation-blind, so an en dash or an accented DIVISION still matches.
-    """
     have = set(norm(option).split())
     return bool(have) and set(norm(wanted).split()) <= have
 
@@ -60,7 +58,22 @@ def log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 
-async def settle(page, ms: int = 900) -> None:
+def stamp() -> str:
+    now = datetime.now(AST)
+    hour = now.hour % 12 or 12
+    if LANG.startswith("es"):
+        ampm = "a. m." if now.hour < 12 else "p. m."
+        return (
+            f"Actualizado: {now.day} de {MESES[now.month - 1]} de {now.year}, "
+            f"{hour}:{now.minute:02d} {ampm}"
+        )
+    return (
+        f"As of: {now:%B} {now.day}, {now.year}, "
+        f"{hour}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'}"
+    )
+
+
+async def settle(page, ms: int = 800) -> None:
     try:
         await page.wait_for_load_state("networkidle", timeout=8000)
     except Exception:
@@ -72,7 +85,6 @@ async def settle(page, ms: int = 900) -> None:
 
 
 async def list_controls(page) -> list[str]:
-    """Every option text currently on the page, for diagnostics."""
     found: list[str] = []
     selects = page.locator("select")
     for i in range(await selects.count()):
@@ -90,7 +102,7 @@ async def list_controls(page) -> list[str]:
     return found
 
 
-async def choose(page, wanted: str, latest: bool = False) -> str | None:
+async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
     """Pick an option matching `wanted`, whatever kind of control holds it."""
 
     def rank(text: str) -> int:
@@ -112,7 +124,6 @@ async def choose(page, wanted: str, latest: bool = False) -> str | None:
             idx, text = best(hits)
             await sel.select_option(index=idx)
             await settle(page)
-            log(f"  selected '{text.strip()}'")
             return text.strip()
 
     triggers = page.get_by_role("combobox")
@@ -121,7 +132,7 @@ async def choose(page, wanted: str, latest: bool = False) -> str | None:
             await triggers.nth(i).click(timeout=2500)
         except Exception:
             continue
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(450)
         opts = page.get_by_role("option")
         try:
             texts = await opts.all_inner_texts()
@@ -132,48 +143,62 @@ async def choose(page, wanted: str, latest: bool = False) -> str | None:
             idx, text = best(hits)
             await opts.nth(idx).click()
             await settle(page)
-            log(f"  clicked '{text.strip()}'")
             return text.strip()
         try:
             await page.keyboard.press("Escape")
         except Exception:
             pass
 
-    try:
-        bits = page.locator("li, a, button, td, div[role], span")
-        texts = await bits.all_inner_texts()
-    except Exception:
-        texts = []
-    hits = [(j, t) for j, t in enumerate(texts) if t.strip() and matches(t, wanted)]
-    if hits:
-        hits.sort(key=lambda x: (-rank(x[1]), len(x[1])) if latest else (len(x[1]),))
-        idx, text = hits[0]
+    if not quiet:
+        log(f"  !! no control matched '{wanted}'. Options visible right now:")
+        for line in await list_controls(page):
+            log(f"       {line}")
+    return None
+
+
+async def jornada_labels(page) -> list[str]:
+    """Every jornada option, in the order the site lists them."""
+    selects = page.locator("select")
+    for i in range(await selects.count()):
         try:
-            await bits.nth(idx).click(timeout=2500)
-            await settle(page)
-            log(f"  clicked text '{text.strip()[:60]}'")
-            return text.strip()
+            opts = await selects.nth(i).locator("option").all_inner_texts()
+        except Exception:
+            continue
+        if any("jornada" in norm(o) for o in opts):
+            return [o.strip() for o in opts if o.strip() and "jornada" in norm(o)]
+
+    triggers = page.get_by_role("combobox")
+    for i in range(await triggers.count()):
+        try:
+            await triggers.nth(i).click(timeout=2000)
+        except Exception:
+            continue
+        await page.wait_for_timeout(400)
+        try:
+            texts = await page.get_by_role("option").all_inner_texts()
+        except Exception:
+            texts = []
+        hits = [t.strip() for t in texts if "jornada" in norm(t)]
+        try:
+            await page.keyboard.press("Escape")
         except Exception:
             pass
-
-    log(f"  !! no control matched '{wanted}'. Options visible right now:")
-    for line in await list_controls(page):
-        log(f"       {line}")
-    return None
+        if hits:
+            return hits
+    return []
 
 
 # ---------------------------------------------------------------- reading
 
 
-async def read_table(page, limit: int = 300) -> list[list[str]]:
-    """Every table row as a list of cell strings. Structure preserved."""
+async def read_table(page, limit: int = 400) -> list[list[str]]:
+    """Every table row as a list of cell strings, structure preserved."""
     rows: list[list[str]] = []
     trs = page.locator("table tr")
     try:
         total = await trs.count()
     except Exception:
         return rows
-
     for i in range(min(total, limit)):
         try:
             cells = await trs.nth(i).locator("th, td").all_inner_texts()
@@ -186,41 +211,39 @@ async def read_table(page, limit: int = 300) -> list[list[str]]:
 
 
 def header_row(rows: list[list[str]], data_row: list[str]) -> list[str]:
-    """The widest row above `data_row` that carries no digits: the headers."""
+    """The last row above `data_row` of equal width carrying no digits."""
     try:
         cut = rows.index(data_row)
     except ValueError:
         cut = len(rows)
-    candidates = [
-        r
-        for r in rows[:cut]
+    cands = [
+        r for r in rows[:cut]
         if len(r) == len(data_row) and not any(re.search(r"\d", c) for c in r)
     ]
-    return candidates[-1] if candidates else []
+    return cands[-1] if cands else []
+
+
+def dedupe(rows: list[list[str]]) -> list[list[str]]:
+    """Drop rows whose text is contained in a wider row already kept."""
+    out: list[list[str]] = []
+    for r in sorted(rows, key=len, reverse=True):
+        sig = norm(" ".join(r))
+        if sig and not any(sig in norm(" ".join(k)) for k in out):
+            out.append(r)
+    return out
 
 
 def find_rows(rows: list[list[str]], needle: str) -> list[list[str]]:
-    """Rows mentioning `needle`, widest first, near-duplicates dropped."""
-    hits = [r for r in rows if any(norm(needle) in norm(c) for c in r)]
-    hits.sort(key=len, reverse=True)
-
-    kept: list[list[str]] = []
-    for r in hits:
-        sig = norm(" ".join(r))
-        if not any(sig in norm(" ".join(k)) for k in kept):
-            kept.append(r)
-    return kept
+    return dedupe([r for r in rows if any(norm(needle) in norm(c) for c in r)])
 
 
-def label_pairs(headers: list[str], row: list[str]) -> list[tuple[str, str]]:
-    """Zip headers onto cells, skipping blanks. Falls back to bare values."""
-    pairs = []
+def pairs(headers: list[str], row: list[str]) -> list[tuple[str, str]]:
+    out = []
     for i, value in enumerate(row):
         if not value.strip():
             continue
-        head = headers[i].strip() if i < len(headers) else ""
-        pairs.append((head, value.strip()))
-    return pairs
+        out.append((headers[i].strip() if i < len(headers) else "", value.strip()))
+    return out
 
 
 async def dump(page, name: str) -> None:
@@ -235,46 +258,74 @@ async def dump(page, name: str) -> None:
 # ---------------------------------------------------------------- scraping
 
 
-async def get_schedule(page) -> dict:
+async def get_fixtures(page) -> list[dict]:
+    """One entry per jornada: the label and our team's row, if any."""
     log("Loading schedule page")
     await page.goto(SCHEDULE_URL, wait_until="domcontentloaded")
     await settle(page, 2500)
-
     await choose(page, TOURNAMENT)
-    await choose(page, "jornada", latest=True)
-    await choose(page, DIVISION)
-    await choose(page, GROUP)
-    await settle(page, 1500)
-    await dump(page, "schedule")
 
-    rows = await read_table(page)
-    hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
-    if not hits:
-        return {}
-    row = hits[0]
-    return {"headers": header_row(rows, row), "row": row}
+    labels = await jornada_labels(page)
+    if not labels:
+        log("  !! found no jornada options")
+        await dump(page, "schedule")
+        return []
+    labels = labels[:MAX_JORNADAS]
+    log(f"  {len(labels)} jornadas to walk")
+
+    out = []
+    for n, label in enumerate(labels, 1):
+        if not await choose(page, label, quiet=True):
+            continue
+        await choose(page, DIVISION, quiet=True)
+        await choose(page, GROUP, quiet=True)
+        await settle(page, 900)
+
+        rows = await read_table(page)
+        hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
+        entry = {"jornada": label, "headers": [], "row": []}
+        if hits:
+            entry["row"] = hits[0]
+            entry["headers"] = header_row(rows, hits[0])
+        out.append(entry)
+        log(f"  [{n}/{len(labels)}] {label}: {'match found' if hits else 'no match'}")
+        if n == len(labels):
+            await dump(page, "schedule")
+    return out
 
 
 async def get_standings(page) -> dict:
     log("Loading standings page")
     await page.goto(STANDINGS_URL, wait_until="domcontentloaded")
     await settle(page, 2500)
-
     await choose(page, TOURNAMENT)
     await choose(page, DIVISION)
     await choose(page, GROUP)
-    await settle(page, 1500)
+    await settle(page, 1200)
     await dump(page, "standings")
 
     rows = await read_table(page)
-    hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
-    if not hits:
+    ours = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
+    if not ours:
+        log("  !! our team is not in the standings table")
         return {}
-    row = hits[0]
-    return {"headers": header_row(rows, row), "row": row}
+
+    row = ours[0]
+    headers = header_row(rows, row)
+    width = len(row)
+    table = dedupe(
+        [
+            r for r in rows
+            if len(r) == width and r != headers and any(re.search(r"\d", c) for c in r)
+        ]
+    )
+    # dedupe() sorts by width; restore the site's own ordering.
+    table.sort(key=lambda r: rows.index(r) if r in rows else 0)
+    log(f"  {len(table)} teams in the table")
+    return {"headers": headers, "rows": table}
 
 
-async def scrape() -> tuple[dict, dict]:
+async def scrape():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         ctx = await browser.new_context(
@@ -282,151 +333,225 @@ async def scrape() -> tuple[dict, dict]:
         )
         page = await ctx.new_page()
         try:
-            return await get_schedule(page), await get_standings(page)
+            return await get_fixtures(page), await get_standings(page)
         finally:
             await browser.close()
 
 
-# ---------------------------------------------------------------- output
+# ---------------------------------------------------------------- page
 
-ES = {
-    "match": "PRÓXIMO PARTIDO",
-    "table": "TABLA DE POSICIONES",
-    "no_match": "Sin partido publicado todavía.",
-    "no_table": "Tabla no disponible.",
-}
-EN = {
-    "match": "NEXT MATCH",
-    "table": "STANDINGS",
-    "no_match": "No match posted yet.",
-    "no_table": "Standings unavailable.",
-}
+ES = {"match": "Partido", "table": "Tabla de posiciones",
+      "none": "Sin partido en esta jornada.", "share": "Compartir por correo",
+      "notable": "Tabla no disponible."}
+EN = {"match": "Match", "table": "Standings",
+      "none": "No match this jornada.", "share": "Share by email",
+      "notable": "Standings unavailable."}
 
 
-def section(title: str, block: dict, empty: str) -> list[str]:
-    lines = [title, "-" * len(title)]
-    if not block:
-        return lines + [f"  {empty}", ""]
+def esc(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    pairs = label_pairs(block.get("headers", []), block.get("row", []))
-    width = max((len(h) for h, _ in pairs if h), default=0)
-    for head, value in pairs:
+
+def fixture_text(entry: dict, t: dict) -> str:
+    """Plain-text version of one jornada, for the share email."""
+    lines = [entry["jornada"]]
+    if not entry.get("row"):
+        return "\n".join(lines + [f"  {t['none']}"])
+    ps = pairs(entry.get("headers", []), entry["row"])
+    width = max((len(h) for h, _ in ps if h), default=0)
+    for head, value in ps:
         lines.append(f"  {head.ljust(width)}  {value}" if head else f"  {value}")
-    return lines + [""]
+    return "\n".join(lines)
 
 
-MESES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
-]
+def standings_text(standings: dict, t: dict) -> str:
+    if not standings:
+        return f"{t['table']}\n  {t['notable']}"
+    headers = standings["headers"]
+    rows = standings["rows"]
+    widths = [
+        max(len(headers[i]) if i < len(headers) else 0,
+            *(len(r[i]) if i < len(r) else 0 for r in rows))
+        for i in range(len(headers) or max(len(r) for r in rows))
+    ]
+    out = [t["table"]]
+    if headers:
+        out.append("  " + "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
+    for r in rows:
+        out.append("  " + "  ".join(
+            (r[i] if i < len(r) else "").ljust(widths[i]) for i in range(len(widths))
+        ))
+    return "\n".join(out)
 
-# Puerto Rico is UTC-4 year round, so a fixed offset is exact here.
-AST = timezone(timedelta(hours=-4))
 
-
-def stamp() -> str:
-    now = datetime.now(AST)
-    hour = now.hour % 12 or 12
-    if LANG.startswith("es"):
-        ampm = "a. m." if now.hour < 12 else "p. m."
-        fecha = f"{now.day} de {MESES[now.month - 1]} de {now.year}"
-        return f"Actualizado: {fecha}, {hour}:{now.minute:02d} {ampm}"
-    return f"As of: {now:%B} {now.day}, {now.year}, {hour}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'}"
-
-
-def build_message(schedule: dict, standings: dict) -> str:
+def write_page(fixtures: list[dict], standings: dict) -> None:
     t = ES if LANG.startswith("es") else EN
-    lines = [NICK, "=" * len(NICK), stamp(), ""]
-    lines += section(t["match"], schedule, t["no_match"])
-    lines += section(t["table"], standings, t["no_table"])
-    return "\n".join(lines).rstrip() + "\n"
+    es = LANG.startswith("es")
 
-
-# ---------------------------------------------------------------- delivery
-
-
-def send_telegram(message: str) -> None:
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    for chat_id in os.environ["TELEGRAM_CHAT_ID"].split(","):
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id.strip(), "text": message},
-            timeout=30,
-        )
-        if r.status_code >= 300:
-            log(f"Telegram error {r.status_code}: {r.text[:300]}")
-            sys.exit(1)
-    log("Sent via Telegram")
-
-
-def send_email(message: str) -> None:
-    user = os.environ["SMTP_USER"]
-    recipients = [a.strip() for a in os.environ["EMAIL_TO"].split(",") if a.strip()]
-
-    msg = EmailMessage()
-    msg["Subject"] = NICK
-    msg["From"] = user
-    msg["To"] = ", ".join(recipients)
-    # Monospace keeps the aligned columns aligned in most mail clients.
-    msg.set_content(message)
-    msg.add_alternative(
-        "<pre style=\"font-family:ui-monospace,Menlo,Consolas,monospace;"
-        "font-size:14px;line-height:1.5\">"
-        + message.replace("&", "&amp;").replace("<", "&lt;")
-        + "</pre>",
-        subtype="html",
+    # Open on the last jornada that actually has a match for us.
+    start = max(
+        (i for i, f in enumerate(fixtures) if f.get("row")),
+        default=len(fixtures) - 1,
     )
 
-    with smtplib.SMTP(
-        os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-        int(os.environ.get("SMTP_PORT", 587)),
-        timeout=30,
-    ) as s:
-        s.starttls()
-        s.login(user, os.environ["SMTP_PASS"])
-        s.send_message(msg)
-    log(f"Sent via email to {len(recipients)} recipient(s)")
+    cards = []
+    for f in fixtures:
+        if f.get("row"):
+            body = "".join(
+                f"<div class=row><span class=k>{esc(h)}</span>"
+                f"<span class=v>{esc(v)}</span></div>"
+                for h, v in pairs(f.get("headers", []), f["row"])
+            )
+        else:
+            body = f"<p class=empty>{esc(t['none'])}</p>"
+        cards.append(body)
 
+    thead = ""
+    tbody = ""
+    if standings:
+        thead = "".join(f"<th>{esc(h)}</th>" for h in standings["headers"])
+        for r in standings["rows"]:
+            mine = " class=mine" if any(matches(c, TEAM) for c in r) else ""
+            tds = "".join(f"<td>{esc(c)}</td>" for c in r)
+            tbody += f"<tr{mine}>{tds}</tr>"
 
-def send(message: str) -> None:
-    if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
-        send_telegram(message)
-    elif os.environ.get("SMTP_USER") and os.environ.get("EMAIL_TO"):
-        send_email(message)
-    else:
-        log("No delivery method configured, printing instead:")
-        print("\n" + message + "\n")
+    share_parts = [f"{NICK}\n{stamp()}\n"]
+    payload = {
+        "labels": [f["jornada"] for f in fixtures],
+        "cards": cards,
+        "texts": [fixture_text(f, t) for f in fixtures],
+        "start": start,
+        "head": "".join(share_parts),
+        "standings": standings_text(standings, t),
+        "subject": f"{NICK} - {stamp()}",
+    }
+
+    html = f"""<!doctype html>
+<html lang="{'es' if es else 'en'}">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b1b2b">
+<title>{esc(NICK)}</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin:0; padding:24px 16px 48px;
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:#f4f6f8; color:#10202e;
+  }}
+  main {{ max-width:560px; margin:0 auto; }}
+  h1 {{ font-size:22px; margin:0 0 4px; letter-spacing:-.01em; }}
+  .stamp {{ color:#5d7080; font-size:14px; margin:0 0 22px; }}
+  section {{
+    background:#fff; border-radius:14px; padding:14px 16px;
+    margin-bottom:16px; box-shadow:0 1px 3px rgba(16,32,46,.10);
+  }}
+  h2 {{
+    font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+    color:#5d7080; margin:0 0 12px; font-weight:600;
+  }}
+  .nav {{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }}
+  .nav button {{
+    flex:0 0 40px; height:40px; border:0; border-radius:10px;
+    background:#eef1f4; color:#10202e; font-size:20px; line-height:1;
+    cursor:pointer;
+  }}
+  .nav button:disabled {{ opacity:.32; cursor:default; }}
+  .nav .label {{ flex:1; text-align:center; font-weight:600; font-size:15px; }}
+  .row {{ display:flex; gap:14px; padding:7px 0; border-top:1px solid #eef1f4; }}
+  .row:first-child {{ border-top:0; }}
+  .k {{ flex:0 0 34%; color:#5d7080; font-size:14px; }}
+  .v {{ flex:1; font-variant-numeric:tabular-nums; }}
+  .empty {{ color:#5d7080; margin:8px 0; }}
+  .scroll {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+  table {{ border-collapse:collapse; width:100%; font-size:14px; }}
+  th,td {{
+    padding:8px 7px; text-align:right; white-space:nowrap;
+    font-variant-numeric:tabular-nums; border-top:1px solid #eef1f4;
+  }}
+  th {{
+    color:#5d7080; font-weight:600; font-size:12px; border-top:0;
+    text-transform:uppercase; letter-spacing:.04em;
+  }}
+  th:nth-child(2),td:nth-child(2) {{ text-align:left; white-space:normal; min-width:150px; }}
+  tr.mine td {{ background:#eaf1fd; font-weight:600; }}
+  .send {{
+    display:block; text-align:center; text-decoration:none;
+    background:#10202e; color:#fff; border-radius:12px;
+    padding:14px 18px; font-size:16px; font-weight:500; margin-bottom:16px;
+  }}
+  .send:active {{ opacity:.75; }}
+  footer {{ text-align:center; font-size:13px; }}
+  footer a {{ color:#5d7080; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ background:#0b1b2b; color:#e8eef4; }}
+    section {{ background:#14293c; box-shadow:none; }}
+    .row,th,td {{ border-top-color:#1e3752; }}
+    .k,.stamp,.empty,th,footer a {{ color:#90a6b8; }}
+    .nav button {{ background:#1e3752; color:#e8eef4; }}
+    tr.mine td {{ background:#1d3f63; }}
+    .send {{ background:#2f6fed; }}
+  }}
+</style>
+<main>
+  <h1>{esc(NICK)}</h1>
+  <p class=stamp>{esc(stamp())}</p>
+
+  <section>
+    <h2>{esc(t['match'])}</h2>
+    <div class=nav>
+      <button id=prev aria-label="anterior">&lsaquo;</button>
+      <span class=label id=jlabel></span>
+      <button id=next aria-label="siguiente">&rsaquo;</button>
+    </div>
+    <div id=card></div>
+  </section>
+
+  <section>
+    <h2>{esc(t['table'])}</h2>
+    <div class=scroll>
+      <table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>
+    </div>
+  </section>
+
+  <a class=send id=share href="#">{esc(t['share'])}</a>
+  <footer><a href="https://ystpr.com/itinerario">ystpr.com</a></footer>
+</main>
+<script>
+const D = {json.dumps(payload, ensure_ascii=False)};
+let i = D.start;
+const card = document.getElementById('card');
+const label = document.getElementById('jlabel');
+const prev = document.getElementById('prev');
+const next = document.getElementById('next');
+const share = document.getElementById('share');
+
+function render() {{
+  label.textContent = D.labels[i] || '';
+  card.innerHTML = D.cards[i] || '';
+  prev.disabled = i <= 0;
+  next.disabled = i >= D.labels.length - 1;
+  const body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.standings + '\\n';
+  share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
+             + '&body=' + encodeURIComponent(body);
+}}
+prev.onclick = () => {{ if (i > 0) {{ i--; render(); }} }};
+next.onclick = () => {{ if (i < D.labels.length - 1) {{ i++; render(); }} }};
+render();
+</script>
+"""
+    Path("index.html").write_text(html, encoding="utf-8")
+    log("Wrote index.html")
 
 
 def main() -> None:
-    schedule, standings = asyncio.run(scrape())
-    if not schedule and not standings:
+    fixtures, standings = asyncio.run(scrape())
+    if not fixtures and not standings:
         log("Nothing extracted. Check the debug/ artifacts.")
         sys.exit(1)
-
-    message = build_message(schedule, standings)
-    current = {"schedule": schedule, "standings": standings}
-
-    previous = {}
-    if STATE.exists():
-        try:
-            previous = json.loads(STATE.read_text())
-        except Exception:
-            pass
-
-    if previous.get("data") == current and "--force" not in sys.argv:
-        log("No change since last run, nothing to send")
-        print("\n" + message + "\n")
-        return
-
-    send(message)
-    STATE.write_text(
-        json.dumps(
-            {"data": current, "sent_at": datetime.now(timezone.utc).isoformat()},
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
+    write_page(fixtures, standings)
 
 
 if __name__ == "__main__":
