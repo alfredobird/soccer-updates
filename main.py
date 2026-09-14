@@ -265,6 +265,35 @@ async def read_table(page, limit: int = 400) -> list[list[str]]:
     return rows
 
 
+async def read_segments(page, limit: int = 400) -> list[list[str]]:
+    """Rows split by text node rather than by cell.
+
+    The results page puts an entire match inside one cell, with the two scores
+    as adjacent inline elements and no whitespace between them. Reading the
+    cell's text gives "Black32CATALA"; reading its text nodes gives the pieces.
+    """
+    js = """(limit) => {
+      const out = [];
+      const trs = document.querySelectorAll('table tr');
+      for (let i = 0; i < Math.min(trs.length, limit); i++) {
+        const seg = [];
+        const w = document.createTreeWalker(trs[i], NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = w.nextNode())) {
+          const t = n.textContent.replace(/\\s+/g, ' ').trim();
+          if (t) seg.push(t);
+        }
+        if (seg.length) out.push(seg);
+      }
+      return out;
+    }"""
+    try:
+        return await page.evaluate(js, limit)
+    except Exception as e:
+        log(f"  (segment read failed: {e})")
+        return []
+
+
 def header_row(rows: list[list[str]], data_row: list[str]) -> list[str]:
     """The last row above `data_row` of equal width carrying no digits."""
     try:
@@ -414,10 +443,10 @@ async def get_results(page, wanted: set[str]) -> dict:
         await choose(page, GROUP, quiet=True)
         await settle(page, 900)
 
-        rows = await read_table(page)
+        rows = await read_segments(page) or await read_table(page)
         hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
         if hits:
-            out[label] = {"headers": header_row(rows, hits[0]), "row": hits[0]}
+            out[label] = {"headers": [], "row": hits[0]}
             log(f"  [{n}/{len(labels)}] {label}: {' | '.join(hits[0])}")
         else:
             log(f"  [{n}/{len(labels)}] {label}: no result row")
@@ -565,9 +594,14 @@ def result_summary(res: dict) -> str:
             break
     if goals is None:
         nums = [(i, int(c)) for i, c in enumerate(row) if re.fullmatch(r"\d{1,2}", c)]
-        if len(nums) < 2:
-            return " · ".join(c for c in row if c)  # unparseable, show it raw
-        goals, goal_at = (nums[0][1], nums[1][1]), nums[0][0]
+        pair = next(
+            ((a, b) for a, b in zip(nums, nums[1:]) if b[0] == a[0] + 1), None
+        )
+        if pair is None:
+            if len(nums) < 2:
+                return " · ".join(c for c in row if c)  # unparseable, show raw
+            pair = (nums[0], nums[1])
+        goals, goal_at = (pair[0][1], pair[1][1]), pair[0][0]
 
     us_idx = next((i for i, c in enumerate(row) if matches(c, TEAM)), None)
     if us_idx is None:
