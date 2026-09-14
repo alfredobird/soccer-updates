@@ -2,9 +2,14 @@ name: soccer-updates
 
 on:
   schedule:
-    # Every 3 hours, so the page is never far behind.
-    - cron: "0 */3 * * *"
+    # Every 30 minutes, all week.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Rewrite the page even if nothing changed"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,27 +28,36 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/cache@v4
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1
+
       - name: Install dependencies
         run: |
-          pip install playwright requests
-          playwright install --with-deps chromium
+          pip install playwright
+          playwright install ${{ steps.browser-cache.outputs.cache-hit == 'true' && '' || '--with-deps' }} chromium
 
       - name: Refresh the page
-        run: python main.py
+        run: python main.py ${{ inputs.force && '--force' || '' }}
 
       - name: Upload page dumps
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: debug-${{ github.run_id }}
           path: debug/
           retention-days: 7
 
-      - name: Save state
-        if: always()
+      - name: Commit the page if it changed
         run: |
           git config user.name "soccer-bot"
           git config user.email "soccer-bot@users.noreply.github.com"
-          git add index.html || true
-          git diff --staged --quiet || git commit -m "update: $(date -u +%F\ %H:%M)"
-          git push || true
+          git add index.html
+          if git diff --staged --quiet; then
+            echo "No change, nothing to commit."
+          else
+            git commit -m "update: $(date -u +%F\ %H:%M)"
+            git push
+          fi
