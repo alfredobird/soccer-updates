@@ -401,10 +401,12 @@ async def scrape():
 # ---------------------------------------------------------------- page
 
 ES = {"match": "Partido", "table": "Tabla de posiciones",
-      "none": "Sin partido en esta jornada.", "share": "Compartir por correo",
+      "none": "Sin partido en esta jornada.", "share": "Email",
+      "wa": "WhatsApp", "shareVia": "Compartir vía:",
       "notable": "Tabla no disponible."}
 EN = {"match": "Match", "table": "Standings",
-      "none": "No match this jornada.", "share": "Share by email",
+      "none": "No match this jornada.", "share": "Email",
+      "wa": "WhatsApp", "shareVia": "Share via:",
       "notable": "Standings unavailable."}
 
 
@@ -435,9 +437,6 @@ def standings_text(standings: dict, t: dict) -> str:
         for i in range(len(headers) or max(len(r) for r in rows))
     ]
     out = [t["table"]]
-    ctx = [c for c in (standings.get("context") or []) if c]
-    if ctx:
-        out.append("  " + " / ".join(ctx))
     if headers:
         out.append("  " + "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
     for r in rows:
@@ -503,7 +502,11 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
             tds = "".join(f"<td>{esc(c)}</td>" for c in r)
             tbody += f"<tr{mine}>{tds}</tr>"
 
-    share_parts = [f"{NICK}\n{stamp()}\n"]
+    head_lines = [NICK]
+    if context:
+        head_lines.append(" / ".join(context))
+    head_lines.append(stamp())
+    share_parts = ["\n".join(head_lines) + "\n"]
     payload = {
         "labels": [f["jornada"] for f in fixtures],
         "cards": cards,
@@ -531,7 +534,9 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
   }}
   main {{ max-width:560px; margin:0 auto; }}
   h1 {{ font-size:22px; margin:0 0 4px; letter-spacing:-.01em; }}
-  .stamp {{ color:#5d7080; font-size:14px; margin:0 0 22px; }}
+  .stamp {{
+    color:#5d7080; font-size:12.5px; line-height:1.4; margin:0 0 22px;
+  }}
   section {{
     background:#fff; border-radius:14px; padding:14px 16px;
     margin-bottom:16px; box-shadow:0 1px 3px rgba(16,32,46,.10);
@@ -554,8 +559,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
   .v {{ flex:1; font-variant-numeric:tabular-nums; }}
   .empty {{ color:#5d7080; margin:8px 0; }}
   .sub {{
-    color:#5d7080; font-size:12.5px; line-height:1.4;
-    margin:-6px 0 12px;
+    color:#5d7080; font-size:12.5px; line-height:1.4; margin:2px 0 2px;
   }}
   .scroll {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
   table {{ border-collapse:collapse; width:100%; font-size:14px; }}
@@ -575,20 +579,29 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     padding:14px 18px; font-size:16px; font-weight:500; margin-bottom:16px;
   }}
   .send:active {{ opacity:.75; }}
+  .actions {{ display:flex; gap:10px; margin-bottom:16px; }}
+  .actions .send {{ flex:1 1 0; margin-bottom:0; }}
+  .sharelabel {{
+    font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+    color:#5d7080; font-weight:600; margin:22px 0 10px;
+  }}
+  .send.wa {{ background:#1f9d5b; }}
   footer {{ text-align:center; font-size:13px; }}
   footer a {{ color:#5d7080; }}
   @media (prefers-color-scheme: dark) {{
     body {{ background:#0b1b2b; color:#e8eef4; }}
     section {{ background:#14293c; box-shadow:none; }}
     .row,th,td {{ border-top-color:#1e3752; }}
-    .k,.stamp,.empty,.sub,th,footer a {{ color:#90a6b8; }}
+    .k,.stamp,.empty,.sub,.sharelabel,th,footer a {{ color:#90a6b8; }}
     .nav button {{ background:#1e3752; color:#e8eef4; }}
     tr.mine td {{ background:#1d3f63; }}
     .send {{ background:#2f6fed; }}
+    .send.wa {{ background:#1f9d5b; }}
   }}
 </style>
 <main>
   <h1>{esc(NICK)}</h1>
+  {context_html}
   <p class=stamp>{esc(stamp())}</p>
 
   <section>
@@ -603,13 +616,16 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 
   <section>
     <h2>{esc(t['table'])}</h2>
-    {context_html}
     <div class=scroll>
       <table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>
     </div>
   </section>
 
-  <a class=send id=share href="#">{esc(t['share'])}</a>
+  <p class=sharelabel>{esc(t['shareVia'])}</p>
+  <div class=actions>
+    <a class="send wa" id=wa href="#">{esc(t['wa'])}</a>
+    <a class=send id=share href="#">{esc(t['share'])}</a>
+  </div>
   <footer><a href="https://ystpr.com/itinerario">ystpr.com</a></footer>
 </main>
 <script>
@@ -620,6 +636,7 @@ const label = document.getElementById('jlabel');
 const prev = document.getElementById('prev');
 const next = document.getElementById('next');
 const share = document.getElementById('share');
+const wa = document.getElementById('wa');
 
 function render() {{
   label.textContent = D.labels[i] || '';
@@ -629,6 +646,8 @@ function render() {{
   const body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.standings + '\\n';
   share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
              + '&body=' + encodeURIComponent(body);
+  // Triple backticks keep the table's columns aligned in WhatsApp.
+  wa.href = 'https://wa.me/?text=' + encodeURIComponent('```\\n' + body + '```');
 }}
 prev.onclick = () => {{ if (i > 0) {{ i--; render(); }} }};
 next.onclick = () => {{ if (i < D.labels.length - 1) {{ i++; render(); }} }};
