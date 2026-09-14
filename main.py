@@ -193,16 +193,16 @@ async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
     return None
 
 
-async def jornada_labels(page) -> list[str]:
-    """Every jornada option, in the order the site lists them."""
+async def option_labels(page, keyword: str) -> list[str]:
+    """Every option whose text contains `keyword`, in the site's own order."""
     selects = page.locator("select")
     for i in range(await selects.count()):
         try:
             opts = await selects.nth(i).locator("option").all_inner_texts()
         except Exception:
             continue
-        if any("jornada" in norm(o) for o in opts):
-            return [o.strip() for o in opts if o.strip() and "jornada" in norm(o)]
+        if any(keyword in norm(o) for o in opts):
+            return [o.strip() for o in opts if o.strip() and keyword in norm(o)]
 
     triggers = page.get_by_role("combobox")
     for i in range(await triggers.count()):
@@ -215,7 +215,7 @@ async def jornada_labels(page) -> list[str]:
             texts = await page.get_by_role("option").all_inner_texts()
         except Exception:
             texts = []
-        hits = [t.strip() for t in texts if "jornada" in norm(t)]
+        hits = [t.strip() for t in texts if keyword in norm(t)]
         try:
             await page.keyboard.press("Escape")
         except Exception:
@@ -223,7 +223,7 @@ async def jornada_labels(page) -> list[str]:
         if hits:
             return hits
 
-    # Anything clickable whose text mentions a jornada.
+    # Anything clickable whose text mentions the keyword.
     try:
         texts = await page.locator(
             "li, a, button, td, th, div[role], span, p, label"
@@ -234,7 +234,7 @@ async def jornada_labels(page) -> list[str]:
     for t in texts:
         t = " ".join(t.split())
         # A label, not a whole panel that happens to contain the word.
-        if "jornada" in norm(t) and len(t) <= 30 and t not in seen:
+        if keyword in norm(t) and len(t) <= 30 and t not in seen:
             seen.add(t)
             hits.append(t)
     if hits:
@@ -287,6 +287,22 @@ def dedupe(rows: list[list[str]]) -> list[list[str]]:
     return out
 
 
+def parse_table(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """Split scraped rows into a header and its data rows."""
+    header = next(
+        (r for r in rows
+         if len(r) >= 3 and not any(re.search(r"\d", c) for c in r)),
+        [],
+    )
+    width = len(header) if header else (max((len(r) for r in rows), default=0))
+    data = dedupe([
+        r for r in rows
+        if len(r) == width and r != header and any(re.search(r"\d", c) for c in r)
+    ])
+    data.sort(key=lambda r: rows.index(r) if r in rows else 0)
+    return header, data
+
+
 def find_rows(rows: list[list[str]], needle: str) -> list[list[str]]:
     return dedupe([r for r in rows if any(norm(needle) in norm(c) for c in r)])
 
@@ -323,7 +339,7 @@ async def get_fixtures(page) -> list[dict]:
         log(f"       {line}")
 
     await choose(page, TOURNAMENT)
-    labels = await jornada_labels(page)
+    labels = await option_labels(page, "jornada")
     if not labels:
         log("  !! found no jornada options")
         await dump(page, "schedule")
@@ -356,33 +372,33 @@ async def get_standings(page) -> dict:
     log("Loading standings page")
     await page.goto(STANDINGS_URL, wait_until="domcontentloaded")
     await settle(page, 2500)
+
     picked = [
         await choose(page, TOURNAMENT) or TOURNAMENT,
         await choose(page, DIVISION) or DIVISION,
-        await choose(page, GROUP) or GROUP,
     ]
-    await settle(page, 1200)
+    await settle(page, 900)
+
+    groups = await option_labels(page, "grupo") or [GROUP]
+    log(f"  {len(groups)} groups to walk")
+
+    tables = []
+    for g in groups:
+        await choose(page, DIVISION, quiet=True)
+        if not await choose(page, g, quiet=True):
+            continue
+        await settle(page, 900)
+        headers, rows = parse_table(await read_table(page))
+        if not rows:
+            continue
+        tables.append({"group": g, "headers": headers, "rows": rows})
+        log(f"  {g}: {len(rows)} teams")
+
     await dump(page, "standings")
-
-    rows = await read_table(page)
-    ours = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
-    if not ours:
-        log("  !! our team is not in the standings table")
+    if not tables:
+        log("  !! no standings tables found")
         return {}
-
-    row = ours[0]
-    headers = header_row(rows, row)
-    width = len(row)
-    table = dedupe(
-        [
-            r for r in rows
-            if len(r) == width and r != headers and any(re.search(r"\d", c) for c in r)
-        ]
-    )
-    # dedupe() sorts by width; restore the site's own ordering.
-    table.sort(key=lambda r: rows.index(r) if r in rows else 0)
-    log(f"  {len(table)} teams in the table")
-    return {"headers": headers, "rows": table, "context": picked}
+    return {"context": picked, "tables": tables}
 
 
 async def scrape():
@@ -444,15 +460,12 @@ def fixture_text(entry: dict, t: dict) -> str:
     return "\n".join(lines)
 
 
-def standings_text(standings: dict, t: dict) -> str:
+def standings_text(table: dict, t: dict) -> str:
     """Rank and club name only. No column alignment to survive."""
-    if not standings:
+    if not table:
         return f"{t['table']}\n{t['notable']}"
-    ctx = [c for c in (standings.get("context") or []) if c]
-    title = f"{t['table']} ({ctx[-1]})" if ctx else t["table"]
-
-    out = [title]
-    for n, r in enumerate(standings["rows"], 1):
+    out = [f"{t['table']} ({table['group']})"]
+    for n, r in enumerate(table["rows"], 1):
         rank = r[0].strip() if r and re.fullmatch(r"\d+", r[0].strip()) else str(n)
         out.append(f"{rank}. {team_name(r)}")
     return "\n".join(out)
@@ -505,14 +518,27 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
         f"<p class=sub>{esc(' · '.join(context))}</p>" if context else ""
     )
 
-    thead = ""
-    tbody = ""
-    if standings:
-        thead = "".join(f"<th>{esc(h)}</th>" for h in standings["headers"])
-        for r in standings["rows"]:
+    tables = standings.get("tables", [])
+    gLabels, gTables, gTexts = [], [], []
+    gStart = 0
+    for n, tb in enumerate(tables):
+        if any(any(matches(c, TEAM) for c in r) for r in tb["rows"]):
+            gStart = n  # open on the group our team plays in
+        thead = "".join(f"<th>{esc(h)}</th>" for h in tb["headers"])
+        body = ""
+        for r in tb["rows"]:
             mine = " class=mine" if any(matches(c, TEAM) for c in r) else ""
-            tds = "".join(f"<td>{esc(c)}</td>" for c in r)
-            tbody += f"<tr{mine}>{tds}</tr>"
+            body += f"<tr{mine}>" + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>"
+        gLabels.append(tb["group"])
+        gTables.append(
+            f"<div class=scroll><table><thead><tr>{thead}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div>"
+        )
+        gTexts.append(standings_text(tb, t))
+    if not tables:
+        gLabels, gTables, gTexts = [""], [f"<p class=empty>{esc(t['notable'])}</p>"], [
+            f"{t['table']}\n{t['notable']}"
+        ]
 
     share_parts = [f"{NICK}\n{stamp()}\n"]
     payload = {
@@ -521,7 +547,10 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
         "texts": [fixture_text(f, t) for f in fixtures],
         "start": start,
         "head": "".join(share_parts),
-        "standings": standings_text(standings, t),
+        "gLabels": gLabels,
+        "gTables": gTables,
+        "gTexts": gTexts,
+        "gStart": gStart,
         "subject": f"{NICK} - {stamp()}",
         "url": page_url(),
     }
@@ -631,9 +660,12 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 
   <section>
     <h2>{esc(t['table'])}</h2>
-    <div class=scroll>
-      <table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>
+    <div class=nav>
+      <button id=gprev aria-label="grupo anterior">&lsaquo;</button>
+      <span class=label id=glabel></span>
+      <button id=gnext aria-label="grupo siguiente">&rsaquo;</button>
     </div>
+    <div id=gtable></div>
   </section>
 
   <p class=sharelabel>{esc(t['shareVia'])}</p>
@@ -647,6 +679,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 <script>
 const D = {json.dumps(payload, ensure_ascii=False)};
 let i = D.start;
+let g = D.gStart;
 const card = document.getElementById('card');
 const label = document.getElementById('jlabel');
 const prev = document.getElementById('prev');
@@ -654,6 +687,10 @@ const next = document.getElementById('next');
 const share = document.getElementById('share');
 const wa = document.getElementById('wa');
 const sms = document.getElementById('sms');
+const gprev = document.getElementById('gprev');
+const gnext = document.getElementById('gnext');
+const glabel = document.getElementById('glabel');
+const gtable = document.getElementById('gtable');
 // iOS and Android disagree on the sms: separator; this form satisfies both.
 const SMS_SEP = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? '&' : '?';
 
@@ -662,7 +699,13 @@ function render() {{
   card.innerHTML = D.cards[i] || '';
   prev.disabled = i <= 0;
   next.disabled = i >= D.labels.length - 1;
-  let body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.standings + '\\n';
+
+  glabel.textContent = D.gLabels[g] || '';
+  gtable.innerHTML = D.gTables[g] || '';
+  gprev.disabled = g <= 0;
+  gnext.disabled = g >= D.gLabels.length - 1;
+
+  let body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.gTexts[g] + '\\n';
   if (D.url) body += '\\n' + D.url + '\\n';
   share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
              + '&body=' + encodeURIComponent(body);
@@ -671,6 +714,8 @@ function render() {{
 }}
 prev.onclick = () => {{ if (i > 0) {{ i--; render(); }} }};
 next.onclick = () => {{ if (i < D.labels.length - 1) {{ i++; render(); }} }};
+gprev.onclick = () => {{ if (g > 0) {{ g--; render(); }} }};
+gnext.onclick = () => {{ if (g < D.gLabels.length - 1) {{ g++; render(); }} }};
 render();
 </script>
 """
