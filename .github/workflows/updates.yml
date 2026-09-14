@@ -2,15 +2,9 @@ name: soccer-updates
 
 on:
   schedule:
-    # 7:00 AM and 7:00 PM Atlantic (AST is UTC-4, no DST in Puerto Rico)
-    - cron: "0 11 * * *"
-    - cron: "0 23 * * *"
+    # Every 3 hours, so the page is never far behind.
+    - cron: "0 */3 * * *"
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Send even if nothing changed"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -34,16 +28,8 @@ jobs:
           pip install playwright requests
           playwright install --with-deps chromium
 
-      - name: Check for updates and notify
-        run: python main.py ${{ inputs.force && '--force' || '' }}
-        env:
-          # Telegram (free). Leave the others unset.
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Email fallback (also free). Only used if Telegram isn't configured.
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      - name: Refresh the page
+        run: python main.py
 
       - name: Upload page dumps
         if: always()
@@ -58,6 +44,6 @@ jobs:
         run: |
           git config user.name "soccer-bot"
           git config user.email "soccer-bot@users.noreply.github.com"
-          git add state.json || true
-          git diff --staged --quiet || git commit -m "state: $(date -u +%F\ %H:%M)"
+          git add index.html || true
+          git diff --staged --quiet || git commit -m "update: $(date -u +%F\ %H:%M)"
           git push || true
