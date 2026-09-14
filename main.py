@@ -99,6 +99,17 @@ async def list_controls(page) -> list[str]:
                 found.append(f"option: {t.strip()}")
     except Exception:
         pass
+    try:
+        seen = set()
+        for t in await page.locator(
+            "li, a, button, div[role], label"
+        ).all_inner_texts():
+            t = " ".join(t.split())
+            if t and len(t) <= 60 and t not in seen:
+                seen.add(t)
+                found.append(f"clickable: {t}")
+    except Exception:
+        pass
     return found
 
 
@@ -124,6 +135,8 @@ async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
             idx, text = best(hits)
             await sel.select_option(index=idx)
             await settle(page)
+            if not quiet:
+                log(f"  selected '{text.strip()}'")
             return text.strip()
 
     triggers = page.get_by_role("combobox")
@@ -143,14 +156,37 @@ async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
             idx, text = best(hits)
             await opts.nth(idx).click()
             await settle(page)
+            if not quiet:
+                log(f"  clicked '{text.strip()}'")
             return text.strip()
         try:
             await page.keyboard.press("Escape")
         except Exception:
             pass
 
+    # Plain clickable text. Many of this site's pickers are not <select>
+    # elements, so this path does most of the real work.
+    try:
+        bits = page.locator("li, a, button, td, th, div[role], span, p, label")
+        texts = await bits.all_inner_texts()
+    except Exception:
+        texts = []
+    hits = [(j, t) for j, t in enumerate(texts) if t.strip() and matches(t, wanted)]
+    if hits:
+        # Shortest match is the label itself rather than a wrapper element.
+        hits.sort(key=lambda x: (-rank(x[1]), len(x[1])) if latest else (len(x[1]),))
+        for idx, text in hits[:4]:
+            try:
+                await bits.nth(idx).click(timeout=2000)
+                await settle(page)
+                if not quiet:
+                    log(f"  clicked text '{text.strip()[:60]}'")
+                return text.strip()
+            except Exception:
+                continue
+
     if not quiet:
-        log(f"  !! no control matched '{wanted}'. Options visible right now:")
+        log(f"  !! no control matched '{wanted}'. Visible options:")
         for line in await list_controls(page):
             log(f"       {line}")
     return None
@@ -185,6 +221,23 @@ async def jornada_labels(page) -> list[str]:
             pass
         if hits:
             return hits
+
+    # Anything clickable whose text mentions a jornada.
+    try:
+        texts = await page.locator(
+            "li, a, button, td, th, div[role], span, p, label"
+        ).all_inner_texts()
+    except Exception:
+        texts = []
+    seen, hits = set(), []
+    for t in texts:
+        t = " ".join(t.split())
+        # A label, not a whole panel that happens to contain the word.
+        if "jornada" in norm(t) and len(t) <= 30 and t not in seen:
+            seen.add(t)
+            hits.append(t)
+    if hits:
+        return hits
     return []
 
 
@@ -263,8 +316,12 @@ async def get_fixtures(page) -> list[dict]:
     log("Loading schedule page")
     await page.goto(SCHEDULE_URL, wait_until="domcontentloaded")
     await settle(page, 2500)
-    await choose(page, TOURNAMENT)
 
+    log("  controls on the page before any selection:")
+    for line in (await list_controls(page))[:80]:
+        log(f"       {line}")
+
+    await choose(page, TOURNAMENT)
     labels = await jornada_labels(page)
     if not labels:
         log("  !! found no jornada options")
