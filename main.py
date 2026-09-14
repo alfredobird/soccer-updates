@@ -414,35 +414,47 @@ def esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def page_url() -> str:
+    """The published Pages URL, worked out from the repo at build time."""
+    explicit = os.environ.get("PAGE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if "/" not in repo:
+        return ""
+    owner, name = repo.split("/", 1)
+    if name.lower() == f"{owner.lower()}.github.io":
+        return f"https://{name.lower()}"
+    return f"https://{owner.lower()}.github.io/{name}"
+
+
+def team_name(row: list[str]) -> str:
+    """The longest cell that isn't a number: the club name."""
+    words = [c for c in row if c.strip() and not re.fullmatch(r"-?\d+", c.strip())]
+    return max(words, key=len).strip() if words else ""
+
+
 def fixture_text(entry: dict, t: dict) -> str:
-    """Plain-text version of one jornada, for the share email."""
+    """One jornada, short enough to read in a chat bubble."""
     lines = [entry["jornada"]]
     if not entry.get("row"):
-        return "\n".join(lines + [f"  {t['none']}"])
-    ps = pairs(entry.get("headers", []), entry["row"])
-    width = max((len(h) for h, _ in ps if h), default=0)
-    for head, value in ps:
-        lines.append(f"  {head.ljust(width)}  {value}" if head else f"  {value}")
+        return "\n".join(lines + [t["none"]])
+    for head, value in pairs(entry.get("headers", []), entry["row"]):
+        lines.append(f"{head}: {value}" if head else value)
     return "\n".join(lines)
 
 
 def standings_text(standings: dict, t: dict) -> str:
+    """Rank and club name only. No column alignment to survive."""
     if not standings:
-        return f"{t['table']}\n  {t['notable']}"
-    headers = standings["headers"]
-    rows = standings["rows"]
-    widths = [
-        max(len(headers[i]) if i < len(headers) else 0,
-            *(len(r[i]) if i < len(r) else 0 for r in rows))
-        for i in range(len(headers) or max(len(r) for r in rows))
-    ]
-    out = [t["table"]]
-    if headers:
-        out.append("  " + "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
-    for r in rows:
-        out.append("  " + "  ".join(
-            (r[i] if i < len(r) else "").ljust(widths[i]) for i in range(len(widths))
-        ))
+        return f"{t['table']}\n{t['notable']}"
+    ctx = [c for c in (standings.get("context") or []) if c]
+    title = f"{t['table']} ({ctx[-1]})" if ctx else t["table"]
+
+    out = [title]
+    for n, r in enumerate(standings["rows"], 1):
+        rank = r[0].strip() if r and re.fullmatch(r"\d+", r[0].strip()) else str(n)
+        out.append(f"{rank}. {team_name(r)}")
     return "\n".join(out)
 
 
@@ -502,11 +514,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
             tds = "".join(f"<td>{esc(c)}</td>" for c in r)
             tbody += f"<tr{mine}>{tds}</tr>"
 
-    head_lines = [NICK]
-    if context:
-        head_lines.append(" / ".join(context))
-    head_lines.append(stamp())
-    share_parts = ["\n".join(head_lines) + "\n"]
+    share_parts = [f"{NICK}\n{stamp()}\n"]
     payload = {
         "labels": [f["jornada"] for f in fixtures],
         "cards": cards,
@@ -515,6 +523,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
         "head": "".join(share_parts),
         "standings": standings_text(standings, t),
         "subject": f"{NICK} - {stamp()}",
+        "url": page_url(),
     }
 
     html = f"""<!doctype html>
@@ -643,11 +652,11 @@ function render() {{
   card.innerHTML = D.cards[i] || '';
   prev.disabled = i <= 0;
   next.disabled = i >= D.labels.length - 1;
-  const body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.standings + '\\n';
+  let body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.standings + '\\n';
+  if (D.url) body += '\\n' + D.url + '\\n';
   share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
              + '&body=' + encodeURIComponent(body);
-  // Triple backticks keep the table's columns aligned in WhatsApp.
-  wa.href = 'https://wa.me/?text=' + encodeURIComponent('```\\n' + body + '```');
+  wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
 }}
 prev.onclick = () => {{ if (i > 0) {{ i--; render(); }} }};
 next.onclick = () => {{ if (i < D.labels.length - 1) {{ i++; render(); }} }};
