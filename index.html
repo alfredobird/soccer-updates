@@ -35,7 +35,7 @@
   }
   main { max-width:560px; margin:0 auto; }
 
-  .top { display:flex; align-items:flex-start; gap:12px; }
+  .top { display:flex; align-items:center; gap:8px; }
   .top div { flex:1; min-width:0; }
   h1 { font-size:22px; margin:0 0 2px; letter-spacing:-.01em; }
   .subtitle, h2, .sharelabel {
@@ -43,13 +43,14 @@
     color:var(--muted); font-weight:600;
   }
   .subtitle { margin:0; }
-  #theme {
-    flex:0 0 auto; width:38px; height:38px; padding:0; border:0;
+  .iconbtn {
+    flex:0 0 auto; width:38px; height:38px; padding:0; margin:0; border:0;
     border-radius:10px; background:var(--chip); color:var(--chipfg);
     cursor:pointer; -webkit-appearance:none; appearance:none;
     display:flex; align-items:center; justify-content:center;
+    font-family:inherit; font-size:12px; font-weight:700; letter-spacing:.04em;
   }
-  #theme svg { display:block; width:18px; height:18px; }
+  .iconbtn svg { display:block; width:18px; height:18px; }
 
   section {
     background:var(--card); border-radius:14px; padding:14px 16px;
@@ -123,82 +124,59 @@
       <h1>Surf Guaynabo U10 Black</h1>
       <p class=subtitle>TORNEO CHAMPIONSHIP 2026 - Fase 1</p>
     </div>
-    <button id=theme aria-label="tema"></button>
+    <button id=lang class=iconbtn></button>
+    <button id=theme class=iconbtn aria-label="theme"></button>
   </div>
 
   <section>
-    <h2>Partidos</h2>
-    <p class=sub>TC 2026 U10 DIVISION 2 - Fase 1 · GRUPO A</p>
+    <h2 id=matchTitle></h2>
+    <p class=sub id=fxSub></p>
     <div class=nav>
-      <button id=prev aria-label="anterior">&lsaquo;</button>
+      <button id=prev aria-label="previous">&lsaquo;</button>
       <span class=label id=jlabel></span>
-      <button id=next aria-label="siguiente">&rsaquo;</button>
+      <button id=next aria-label="next">&rsaquo;</button>
     </div>
     <div id=card></div>
   </section>
 
   <section>
-    <h2>Tabla de posiciones</h2>
-    <p class=sub>TC 2026 U10 DIVISION 2 - Fase 1</p>
+    <h2 id=tableTitle></h2>
+    <p class=sub id=stSub></p>
     <div class=nav>
-      <button id=gprev aria-label="grupo anterior">&lsaquo;</button>
+      <button id=gprev aria-label="previous group">&lsaquo;</button>
       <span class=label id=glabel></span>
-      <button id=gnext aria-label="grupo siguiente">&rsaquo;</button>
+      <button id=gnext aria-label="next group">&rsaquo;</button>
     </div>
     <div id=gtable></div>
   </section>
 
-  <p class=sharelabel>Compartir vía:</p>
+  <p class=sharelabel id=shareVia></p>
   <div class=actions>
-    <a class=wa id=wa href="#">WhatsApp</a>
-    <a class=sms id=sms href="#">Texto</a>
-    <a id=share href="#">Email</a>
+    <a class=wa id=wa href="#"></a>
+    <a class=sms id=sms href="#"></a>
+    <a id=share href="#"></a>
   </div>
 
   <footer>
-    <p>Actualizado: 14 de septiembre de 2026, 3:24 p. m.</p>
+    <p id=stamp></p>
     <a href="https://ystpr.com/itinerario">ystpr.com</a>
   </footer>
 </main>
 <script>
-const D = {"labels": ["Jornada 1"], "cards": ["<div class=row><span class=k>Día</span><span class=v>9/13/2026</span></div><div class=row><span class=k>Hora</span><span class=v>01:30 p. m.</span></div><div class=row><span class=k>Partido</span><span class=v>SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL</span></div><div class=row><span class=k>Sede</span><span class=v>TORRIMAR</span></div><div class=row><span class=k>Cancha</span><span class=v>ROJA</span></div><div class=row><span class=k>Estado</span><span class=v>Finalizado</span></div><div class=row><span class=k>Resultado</span><span class='v score'>3-2 ✅</span></div>"], "texts": ["Jornada 1\nDía: 9/13/2026\nHora: 01:30 p. m.\nPartido: SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL\nSede: TORRIMAR\nCancha: ROJA\nEstado: Finalizado\nResultado: 3-2 ✅"], "start": 0, "gLabels": ["GRUPO A", "GRUPO B", "GRUPO C"], "gTables": ["<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>CAPARRA U10 ROJO</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>7</td><td>1</td><td>6</td></tr><tr class=mine><td>2</td><td>SURF GUAYNABO U10 2016 Black</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>2</td><td>1</td></tr><tr><td>3</td><td>CATALA FC U10 2016 VERMELL</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>2</td><td>3</td><td>-1</td></tr><tr><td>4</td><td>MIRABELLI U10 Encantada NEGRO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>7</td><td>-6</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>DON BOSCO FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>4</td><td>0</td><td>4</td></tr><tr><td>2</td><td>ESCORIAL F.C. U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>1</td><td>2</td></tr><tr><td>3</td><td>IVY LEAGUE SC U10 BLUE</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>3</td><td>-2</td></tr><tr><td>4</td><td>MIRABELLI U10 2016 DORADO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>4</td><td>-4</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>CATALA FC U10 2016 GROC</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>8</td><td>3</td><td>5</td></tr><tr><td>2</td><td>SAN JUAN FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>1</td><td>1</td></tr><tr><td>3</td><td>ACADEMIA QUINTANA U10 A</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>2</td><td>-1</td></tr><tr><td>4</td><td>CRIOLLOS FC U10 - 2D</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>3</td><td>8</td><td>-5</td></tr></tbody></table></div>"], "gTexts": ["Tabla de posiciones (GRUPO A)\n1. CAPARRA U10 ROJO\n2. SURF GUAYNABO U10 2016 Black\n3. CATALA FC U10 2016 VERMELL\n4. MIRABELLI U10 Encantada NEGRO", "Tabla de posiciones (GRUPO B)\n1. DON BOSCO FC U10\n2. ESCORIAL F.C. U10\n3. IVY LEAGUE SC U10 BLUE\n4. MIRABELLI U10 2016 DORADO", "Tabla de posiciones (GRUPO C)\n1. CATALA FC U10 2016 GROC\n2. SAN JUAN FC U10\n3. ACADEMIA QUINTANA U10 A\n4. CRIOLLOS FC U10 - 2D"], "gStart": 0, "head": "Surf Guaynabo U10 Black\nActualizado: 14 de septiembre de 2026, 3:24 p. m.\n", "subject": "Surf Guaynabo U10 Black - Actualizado: 14 de septiembre de 2026, 3:24 p. m.", "url": "https://alfredobird.github.io/soccer-updates"};
-let i = D.start, g = D.gStart;
+const D = {"es": {"labels": ["Jornada 1"], "cards": ["<div class=row><span class=k>Día</span><span class=v>9/13/2026</span></div><div class=row><span class=k>Hora</span><span class=v>01:30 p. m.</span></div><div class=row><span class=k>Partido</span><span class=v>SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL</span></div><div class=row><span class=k>Sede</span><span class=v>TORRIMAR</span></div><div class=row><span class=k>Cancha</span><span class=v>ROJA</span></div><div class=row><span class=k>Estado</span><span class=v>Finalizado</span></div><div class=row><span class=k>Resultado</span><span class='v score'>3-2 ✅</span></div>"], "texts": ["Jornada 1\nDía: 9/13/2026\nHora: 01:30 p. m.\nPartido: SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL\nSede: TORRIMAR\nCancha: ROJA\nEstado: Finalizado\nResultado: 3-2 ✅"], "gLabels": ["GRUPO A", "GRUPO B", "GRUPO C"], "gTables": ["<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>CAPARRA U10 ROJO</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>7</td><td>1</td><td>6</td></tr><tr class=mine><td>2</td><td>SURF GUAYNABO U10 2016 Black</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>2</td><td>1</td></tr><tr><td>3</td><td>CATALA FC U10 2016 VERMELL</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>2</td><td>3</td><td>-1</td></tr><tr><td>4</td><td>MIRABELLI U10 Encantada NEGRO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>7</td><td>-6</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>DON BOSCO FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>4</td><td>0</td><td>4</td></tr><tr><td>2</td><td>ESCORIAL F.C. U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>1</td><td>2</td></tr><tr><td>3</td><td>IVY LEAGUE SC U10 BLUE</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>3</td><td>-2</td></tr><tr><td>4</td><td>MIRABELLI U10 2016 DORADO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>4</td><td>-4</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Equipo</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>PE</th><th>GF</th><th>GC</th><th>DIF</th></tr></thead><tbody><tr><td>1</td><td>CATALA FC U10 2016 GROC</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>8</td><td>3</td><td>5</td></tr><tr><td>2</td><td>SAN JUAN FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>1</td><td>1</td></tr><tr><td>3</td><td>ACADEMIA QUINTANA U10 A</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>2</td><td>-1</td></tr><tr><td>4</td><td>CRIOLLOS FC U10 - 2D</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>3</td><td>8</td><td>-5</td></tr></tbody></table></div>"], "gTexts": ["Tabla de posiciones (GRUPO A)\n1. CAPARRA U10 ROJO\n2. SURF GUAYNABO U10 2016 Black\n3. CATALA FC U10 2016 VERMELL\n4. MIRABELLI U10 Encantada NEGRO", "Tabla de posiciones (GRUPO B)\n1. DON BOSCO FC U10\n2. ESCORIAL F.C. U10\n3. IVY LEAGUE SC U10 BLUE\n4. MIRABELLI U10 2016 DORADO", "Tabla de posiciones (GRUPO C)\n1. CATALA FC U10 2016 GROC\n2. SAN JUAN FC U10\n3. ACADEMIA QUINTANA U10 A\n4. CRIOLLOS FC U10 - 2D"], "fxSub": "TC 2026 U10 DIVISION 2 - Fase 1 · GRUPO A", "stSub": "TC 2026 U10 DIVISION 2 - Fase 1", "matchTitle": "Partidos", "tableTitle": "Tabla de posiciones", "shareVia": "Compartir vía:", "btnWa": "WhatsApp", "btnSms": "Texto", "btnMail": "Email", "stamp": "Actualizado: 14 de septiembre de 2026, 3:54 p. m.", "head": "Surf Guaynabo U10 Black\nActualizado: 14 de septiembre de 2026, 3:54 p. m.\n", "subject": "Surf Guaynabo U10 Black - Actualizado: 14 de septiembre de 2026, 3:54 p. m."}, "en": {"labels": ["Matchday 1"], "cards": ["<div class=row><span class=k>Día</span><span class=v>9/13/2026</span></div><div class=row><span class=k>Time</span><span class=v>01:30 p. m.</span></div><div class=row><span class=k>Partido</span><span class=v>SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL</span></div><div class=row><span class=k>Venue</span><span class=v>TORRIMAR</span></div><div class=row><span class=k>Field</span><span class=v>ROJA</span></div><div class=row><span class=k>Status</span><span class=v>Final</span></div><div class=row><span class=k>Result</span><span class='v score'>3-2 ✅</span></div>"], "texts": ["Matchday 1\nDía: 9/13/2026\nTime: 01:30 p. m.\nPartido: SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL\nVenue: TORRIMAR\nField: ROJA\nStatus: Final\nResult: 3-2 ✅"], "gLabels": ["GROUP A", "GROUP B", "GROUP C"], "gTables": ["<div class=scroll><table><thead><tr><th>Posición</th><th>Team</th><th>PTS</th><th>GP</th><th>W</th><th>L</th><th>D</th><th>GF</th><th>GA</th><th>GD</th></tr></thead><tbody><tr><td>1</td><td>CAPARRA U10 ROJO</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>7</td><td>1</td><td>6</td></tr><tr class=mine><td>2</td><td>SURF GUAYNABO U10 2016 Black</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>2</td><td>1</td></tr><tr><td>3</td><td>CATALA FC U10 2016 VERMELL</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>2</td><td>3</td><td>-1</td></tr><tr><td>4</td><td>MIRABELLI U10 Encantada NEGRO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>7</td><td>-6</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Team</th><th>PTS</th><th>GP</th><th>W</th><th>L</th><th>D</th><th>GF</th><th>GA</th><th>GD</th></tr></thead><tbody><tr><td>1</td><td>DON BOSCO FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>4</td><td>0</td><td>4</td></tr><tr><td>2</td><td>ESCORIAL F.C. U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>3</td><td>1</td><td>2</td></tr><tr><td>3</td><td>IVY LEAGUE SC U10 BLUE</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>3</td><td>-2</td></tr><tr><td>4</td><td>MIRABELLI U10 2016 DORADO</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>4</td><td>-4</td></tr></tbody></table></div>", "<div class=scroll><table><thead><tr><th>Posición</th><th>Team</th><th>PTS</th><th>GP</th><th>W</th><th>L</th><th>D</th><th>GF</th><th>GA</th><th>GD</th></tr></thead><tbody><tr><td>1</td><td>CATALA FC U10 2016 GROC</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>8</td><td>3</td><td>5</td></tr><tr><td>2</td><td>SAN JUAN FC U10</td><td>3</td><td>1</td><td>1</td><td>0</td><td>0</td><td>2</td><td>1</td><td>1</td></tr><tr><td>3</td><td>ACADEMIA QUINTANA U10 A</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>1</td><td>2</td><td>-1</td></tr><tr><td>4</td><td>CRIOLLOS FC U10 - 2D</td><td>0</td><td>1</td><td>0</td><td>1</td><td>0</td><td>3</td><td>8</td><td>-5</td></tr></tbody></table></div>"], "gTexts": ["Standings (GROUP A)\n1. CAPARRA U10 ROJO\n2. SURF GUAYNABO U10 2016 Black\n3. CATALA FC U10 2016 VERMELL\n4. MIRABELLI U10 Encantada NEGRO", "Standings (GROUP B)\n1. DON BOSCO FC U10\n2. ESCORIAL F.C. U10\n3. IVY LEAGUE SC U10 BLUE\n4. MIRABELLI U10 2016 DORADO", "Standings (GROUP C)\n1. CATALA FC U10 2016 GROC\n2. SAN JUAN FC U10\n3. ACADEMIA QUINTANA U10 A\n4. CRIOLLOS FC U10 - 2D"], "fxSub": "TC 2026 U10 DIVISION 2 - Fase 1 · GROUP A", "stSub": "TC 2026 U10 DIVISION 2 - Fase 1", "matchTitle": "Matches", "tableTitle": "Standings", "shareVia": "Share via:", "btnWa": "WhatsApp", "btnSms": "Text", "btnMail": "Email", "stamp": "As of: September 14, 2026, 3:54 PM", "head": "Surf Guaynabo U10 Black\nAs of: September 14, 2026, 3:54 PM\n", "subject": "Surf Guaynabo U10 Black - As of: September 14, 2026, 3:54 PM"}, "lang": "es", "start": 0, "gStart": 0, "url": "https://alfredobird.github.io/soccer-updates", "nick": "Surf Guaynabo U10 Black", "subtitle": "TORNEO CHAMPIONSHIP 2026 - Fase 1"};
+let i = D.start, g = D.gStart, lang = D.lang;
 
 const $ = id => document.getElementById(id);
-const card = $('card'), label = $('jlabel'), prev = $('prev'), next = $('next');
+const card = $('card'), jlabel = $('jlabel'), prev = $('prev'), next = $('next');
 const gtable = $('gtable'), glabel = $('glabel');
 const gprev = $('gprev'), gnext = $('gnext');
-const share = $('share'), wa = $('wa'), sms = $('sms'), theme = $('theme');
+const share = $('share'), wa = $('wa'), sms = $('sms');
+const theme = $('theme'), langBtn = $('lang');
 
 // iOS and Android disagree on the sms: separator.
 const SEP = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? '&' : '?';
 
-function render() {
-  label.textContent = D.labels[i] || '';
-  card.innerHTML = D.cards[i] || '';
-  prev.disabled = i <= 0;
-  next.disabled = i >= D.labels.length - 1;
-
-  glabel.textContent = D.gLabels[g] || '';
-  gtable.innerHTML = D.gTables[g] || '';
-  gprev.disabled = g <= 0;
-  gnext.disabled = g >= D.gLabels.length - 1;
-
-  let body = D.head + '\n' + D.texts[i] + '\n\n' + D.gTexts[g] + '\n';
-  if (D.url) body += '\n' + D.url + '\n';
-  share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
-             + '&body=' + encodeURIComponent(body);
-  wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
-  sms.href = 'sms:' + SEP + 'body=' + encodeURIComponent(body);
-}
-
-function isDark() {
-  const set = document.documentElement.getAttribute('data-theme');
-  if (set) return set === 'dark';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-// Inline SVG rather than ☀/☾ glyphs, whose metrics vary by fallback font.
+// Inline SVG rather than sun and moon glyphs, whose metrics vary by font.
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
      + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -209,24 +187,73 @@ const ICON = {
       + '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
 };
 
-function paint() { theme.innerHTML = isDark() ? ICON.sun : ICON.moon; }
+function store(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-try {
-  const saved = localStorage.getItem('theme');
-  if (saved) document.documentElement.setAttribute('data-theme', saved);
-} catch (e) {}
+function isDark() {
+  const set = document.documentElement.getAttribute('data-theme');
+  if (set) return set === 'dark';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function render() {
+  const L = D[lang];
+
+  $('matchTitle').textContent = L.matchTitle;
+  $('tableTitle').textContent = L.tableTitle;
+  $('fxSub').textContent = L.fxSub;
+  $('stSub').textContent = L.stSub;
+  $('shareVia').textContent = L.shareVia;
+  $('stamp').textContent = L.stamp;
+  wa.textContent = L.btnWa;
+  sms.textContent = L.btnSms;
+  share.textContent = L.btnMail;
+
+  jlabel.textContent = L.labels[i] || '';
+  card.innerHTML = L.cards[i] || '';
+  prev.disabled = i <= 0;
+  next.disabled = i >= L.labels.length - 1;
+
+  glabel.textContent = L.gLabels[g] || '';
+  gtable.innerHTML = L.gTables[g] || '';
+  gprev.disabled = g <= 0;
+  gnext.disabled = g >= L.gLabels.length - 1;
+
+  let body = L.head + '\n' + L.texts[i] + '\n\n' + L.gTexts[g] + '\n';
+  if (D.url) body += '\n' + D.url + '\n';
+  share.href = 'mailto:?subject=' + encodeURIComponent(L.subject)
+             + '&body=' + encodeURIComponent(body);
+  wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
+  sms.href = 'sms:' + SEP + 'body=' + encodeURIComponent(body);
+
+  document.documentElement.setAttribute('lang', lang);
+  langBtn.textContent = lang === 'es' ? 'EN' : 'ES';
+  langBtn.setAttribute('aria-label',
+    lang === 'es' ? 'Switch to English' : 'Cambiar a espanol');
+  theme.innerHTML = isDark() ? ICON.sun : ICON.moon;
+}
+
+const savedTheme = recall('theme');
+if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+const savedLang = recall('lang');
+if (savedLang === 'es' || savedLang === 'en') lang = savedLang;
 
 prev.onclick = () => { if (i > 0) { i--; render(); } };
-next.onclick = () => { if (i < D.labels.length - 1) { i++; render(); } };
+next.onclick = () => { if (i < D[lang].labels.length - 1) { i++; render(); } };
 gprev.onclick = () => { if (g > 0) { g--; render(); } };
-gnext.onclick = () => { if (g < D.gLabels.length - 1) { g++; render(); } };
+gnext.onclick = () => { if (g < D[lang].gLabels.length - 1) { g++; render(); } };
+
 theme.onclick = () => {
   const mode = isDark() ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', mode);
-  try { localStorage.setItem('theme', mode); } catch (e) {}
-  paint();
+  store('theme', mode);
+  render();
+};
+langBtn.onclick = () => {
+  lang = lang === 'es' ? 'en' : 'es';
+  store('lang', lang);
+  render();
 };
 
-paint();
 render();
 </script>
