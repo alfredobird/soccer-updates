@@ -348,23 +348,44 @@ async def get_fixtures(page) -> list[dict]:
     log(f"  {len(labels)} jornadas to walk")
 
     out = []
+    bad = 0
     for n, label in enumerate(labels, 1):
         if not await choose(page, label, quiet=True):
             continue
-        await choose(page, DIVISION, quiet=True)
-        await choose(page, GROUP, quiet=True)
+        got_div = await choose(page, DIVISION, quiet=True)
+        got_grp = await choose(page, GROUP, quiet=True)
         await settle(page, 900)
+
+        # A silent fallback would show another group's fixtures and look fine,
+        # so record what the pickers actually landed on.
+        ok = bool(got_div) and bool(got_grp)
+        if not ok:
+            bad += 1
 
         rows = await read_table(page)
         hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
-        entry = {"jornada": label, "headers": [], "row": []}
+        entry = {
+            "jornada": label,
+            "headers": [],
+            "row": [],
+            "group": got_grp or "",
+            "division": got_div or "",
+            "verified": ok,
+        }
         if hits:
             entry["row"] = hits[0]
             entry["headers"] = header_row(rows, hits[0])
         out.append(entry)
-        log(f"  [{n}/{len(labels)}] {label}: {'match found' if hits else 'no match'}")
+        log(
+            f"  [{n}/{len(labels)}] {label} | {got_div or 'DIVISION NOT SET'}"
+            f" | {got_grp or 'GROUP NOT SET'}"
+            f" | {'match found' if hits else 'no match'}"
+        )
         if n == len(labels):
             await dump(page, "schedule")
+
+    if bad:
+        log(f"  !! {bad} of {len(out)} jornadas could not confirm the filters")
     return out
 
 
@@ -419,10 +440,12 @@ async def scrape():
 ES = {"match": "Partido", "table": "Tabla de posiciones",
       "none": "Sin partido en esta jornada.", "share": "Email",
       "wa": "WhatsApp", "sms": "Texto", "shareVia": "Compartir vía:",
+      "unverified": "No se pudo confirmar el grupo. Verifica en ystpr.com.",
       "notable": "Tabla no disponible."}
 EN = {"match": "Match", "table": "Standings",
       "none": "No match this jornada.", "share": "Email",
       "wa": "WhatsApp", "sms": "Text", "shareVia": "Share via:",
+      "unverified": "Could not confirm the group. Check ystpr.com.",
       "notable": "Standings unavailable."}
 
 
@@ -453,6 +476,8 @@ def team_name(row: list[str]) -> str:
 def fixture_text(entry: dict, t: dict) -> str:
     """One jornada, short enough to read in a chat bubble."""
     lines = [entry["jornada"]]
+    if not entry.get("verified", True):
+        lines.append(f"({t['unverified']})")
     if not entry.get("row"):
         return "\n".join(lines + [t["none"]])
     for head, value in pairs(entry.get("headers", []), entry["row"]):
@@ -503,6 +528,11 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 
     cards = []
     for f in fixtures:
+        if f.get("verified"):
+            tag = " · ".join(x for x in (f.get("division"), f.get("group")) if x)
+            banner = f"<p class=sub>{esc(tag)}</p>" if tag else ""
+        else:
+            banner = f"<p class=warn>{esc(t['unverified'])}</p>"
         if f.get("row"):
             body = "".join(
                 f"<div class=row><span class=k>{esc(h)}</span>"
@@ -511,7 +541,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
             )
         else:
             body = f"<p class=empty>{esc(t['none'])}</p>"
-        cards.append(body)
+        cards.append(banner + body)
 
     context = [c for c in (standings.get("context") or []) if c]
     context_html = (
@@ -596,6 +626,10 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
   .k {{ flex:0 0 34%; color:#5d7080; font-size:14px; }}
   .v {{ flex:1; font-variant-numeric:tabular-nums; }}
   .empty {{ color:#5d7080; margin:8px 0; }}
+  .warn {{
+    color:#8a4b00; background:#fdf1e0; border-radius:8px;
+    padding:8px 10px; font-size:13px; margin:0 0 10px;
+  }}
   .sub {{
     color:#5d7080; font-size:12.5px; line-height:1.4; margin:2px 0 2px;
   }}
@@ -635,6 +669,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     section {{ background:#14293c; box-shadow:none; }}
     .row,th,td {{ border-top-color:#1e3752; }}
     .k,.stamp,.empty,.sub,.sharelabel,th,footer a {{ color:#90a6b8; }}
+    .warn {{ color:#ffcf93; background:#3a2a12; }}
     .nav button {{ background:#1e3752; color:#e8eef4; }}
     tr.mine td {{ background:#1d3f63; }}
     .send {{ background:#2f6fed; }}
