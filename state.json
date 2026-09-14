@@ -1,13 +1,49 @@
 {
   "data": {
-    "schedule": [
-      "9/13/2026 01:30 p. m. SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL TORRIMAR ROJA Finalizado",
-      "SURF GUAYNABO U10 2016 BlackTORRIMAR09/13/202601:30 p. m. CATALA FC U10 2016 VERMELL"
-    ],
-    "standings": [
-      "2 SURF GUAYNABO U10 2016 Black 3 1 1 0 0 3 2 1",
-      "2 SURF GUAYNABO U10 2016 Black3"
-    ]
+    "schedule": {
+      "headers": [
+        "Día",
+        "Hora",
+        "Partido",
+        "Sede",
+        "Cancha",
+        "Estado"
+      ],
+      "row": [
+        "9/13/2026",
+        "01:30 p. m.",
+        "SURF GUAYNABO U10 2016 Black vs CATALA FC U10 2016 VERMELL",
+        "TORRIMAR",
+        "ROJA",
+        "Finalizado"
+      ]
+    },
+    "standings": {
+      "headers": [
+        "Posición",
+        "Equipo",
+        "PTS",
+        "PJ",
+        "PG",
+        "PP",
+        "PE",
+        "GF",
+        "GC",
+        "DIF"
+      ],
+      "row": [
+        "2",
+        "SURF GUAYNABO U10 2016 Black",
+        "3",
+        "1",
+        "1",
+        "0",
+        "0",
+        "3",
+        "2",
+        "1"
+      ]
+    }
   },
-  "sent_at": "2026-09-14T16:39:10.134678+00:00"
+  "sent_at": "2026-09-14T16:51:41.275053+00:00"
 }
