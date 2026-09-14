@@ -7,6 +7,7 @@ No email is sent. The page carries a share button that opens a mail client.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -441,7 +442,27 @@ def standings_text(standings: dict, t: dict) -> str:
     return "\n".join(out)
 
 
-def write_page(fixtures: list[dict], standings: dict) -> None:
+def digest(fixtures: list[dict], standings: dict) -> str:
+    """Fingerprint of the data only. Deliberately excludes the timestamp."""
+    blob = json.dumps(
+        {"f": fixtures, "s": standings, "nick": NICK, "lang": LANG},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def unchanged(fp: str) -> bool:
+    page = Path("index.html")
+    if not page.exists():
+        return False
+    try:
+        return f'data-digest="{fp}"' in page.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+
+def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     t = ES if LANG.startswith("es") else EN
     es = LANG.startswith("es")
 
@@ -484,7 +505,7 @@ def write_page(fixtures: list[dict], standings: dict) -> None:
     }
 
     html = f"""<!doctype html>
-<html lang="{'es' if es else 'en'}">
+<html lang="{'es' if es else 'en'}" data-digest="{fp}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -608,7 +629,12 @@ def main() -> None:
     if not fixtures and not standings:
         log("Nothing extracted. Check the debug/ artifacts.")
         sys.exit(1)
-    write_page(fixtures, standings)
+
+    fp = digest(fixtures, standings)
+    if unchanged(fp) and "--force" not in sys.argv:
+        log("No change in fixtures or standings. Leaving index.html alone.")
+        return
+    write_page(fixtures, standings, fp)
 
 
 if __name__ == "__main__":
