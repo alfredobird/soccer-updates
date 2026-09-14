@@ -27,6 +27,7 @@ GROUP = os.environ.get("GROUP", "Grupo A")
 
 SCHEDULE_URL = "https://ystpr.com/itinerario"
 STANDINGS_URL = "https://ystpr.com/posiciones"
+RESULTS_URL = "https://ystpr.com/resultados"
 
 NICK = os.environ.get("NICK", "Surf Guaynabo U10 Black")
 LANG = os.environ.get("LANG_OUT", "es")
@@ -389,6 +390,42 @@ async def get_fixtures(page) -> list[dict]:
     return out
 
 
+async def get_results(page, wanted: set[str]) -> dict:
+    """Our team's result row for each jornada already played."""
+    if not wanted:
+        return {}
+    log("Loading results page")
+    await page.goto(RESULTS_URL, wait_until="domcontentloaded")
+    await settle(page, 2500)
+    await choose(page, TOURNAMENT)
+
+    labels = [l for l in await option_labels(page, "jornada") if l in wanted]
+    if not labels:
+        log("  !! no matching jornadas on the results page")
+        await dump(page, "results")
+        return {}
+    log(f"  {len(labels)} played jornadas to check")
+
+    out = {}
+    for n, label in enumerate(labels, 1):
+        if not await choose(page, label, quiet=True):
+            continue
+        await choose(page, DIVISION, quiet=True)
+        await choose(page, GROUP, quiet=True)
+        await settle(page, 900)
+
+        rows = await read_table(page)
+        hits = find_rows(rows, TEAM) or find_rows(rows, "SURF GUAYNABO")
+        if hits:
+            out[label] = {"headers": header_row(rows, hits[0]), "row": hits[0]}
+            log(f"  [{n}/{len(labels)}] {label}: {' | '.join(hits[0])}")
+        else:
+            log(f"  [{n}/{len(labels)}] {label}: no result row")
+        if n == len(labels):
+            await dump(page, "results")
+    return out
+
+
 async def get_standings(page) -> dict:
     log("Loading standings page")
     await page.goto(STANDINGS_URL, wait_until="domcontentloaded")
@@ -430,22 +467,36 @@ async def scrape():
         )
         page = await ctx.new_page()
         try:
-            return await get_fixtures(page), await get_standings(page)
+            fixtures = await get_fixtures(page)
+
+            # Only chase results for jornadas that have already been played.
+            today = datetime.now(AST).date()
+            played = {
+                f["jornada"] for f in fixtures
+                if f.get("row") and (fixture_date(f) or today) <= today
+            }
+            results = await get_results(page, played)
+            for f in fixtures:
+                f["result"] = results.get(f["jornada"], {})
+
+            return fixtures, await get_standings(page)
         finally:
             await browser.close()
 
 
 # ---------------------------------------------------------------- page
 
-ES = {"match": "Partido", "table": "Tabla de posiciones",
+ES = {"match": "Partidos", "table": "Tabla de posiciones",
       "none": "Sin partido en esta jornada.", "share": "Email",
       "wa": "WhatsApp", "sms": "Texto", "shareVia": "Compartir vía:",
       "unverified": "No se pudo confirmar el grupo. Verifica en ystpr.com.",
+      "next": "Próximo", "result": "Resultado",
       "notable": "Tabla no disponible."}
-EN = {"match": "Match", "table": "Standings",
+EN = {"match": "Matches", "table": "Standings",
       "none": "No match this jornada.", "share": "Email",
       "wa": "WhatsApp", "sms": "Text", "shareVia": "Share via:",
       "unverified": "Could not confirm the group. Check ystpr.com.",
+      "next": "Next", "result": "Result",
       "notable": "Standings unavailable."}
 
 
@@ -467,21 +518,90 @@ def page_url() -> str:
     return f"https://{owner.lower()}.github.io/{name}"
 
 
+def parse_date(text: str):
+    """Best-effort date out of a cell. Tries US order first, then day-first."""
+    m = re.search(r"\d{1,4}[/-]\d{1,2}[/-]\d{2,4}", (text or "").strip())
+    if not m:
+        return None
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(m.group(0), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def fixture_date(entry: dict):
+    """The date of a jornada's match, preferring a column labelled Fecha."""
+    headers, row = entry.get("headers") or [], entry.get("row") or []
+    for i, h in enumerate(headers):
+        if "fecha" in norm(h) and i < len(row):
+            d = parse_date(row[i])
+            if d:
+                return d
+    for cell in row:
+        d = parse_date(cell)
+        if d:
+            return d
+    return None
+
+
+def result_summary(res: dict) -> str:
+    """One line: our goals first, then theirs, with a win/loss/draw marker.
+
+    The results page's column layout is unknown, so this works it out from the
+    row itself: find the two goal numbers, then find which side we are on.
+    """
+    row = [c.strip() for c in (res.get("row") or [])]
+    if not row:
+        return ""
+
+    # Goals may be one cell ("3 - 1") or two separate numeric cells.
+    goals, goal_at = None, None
+    for i, cell in enumerate(row):
+        m = re.fullmatch(r"(\d{1,2})\s*[-–:xX]\s*(\d{1,2})", cell)
+        if m:
+            goals, goal_at = (int(m.group(1)), int(m.group(2))), i
+            break
+    if goals is None:
+        nums = [(i, int(c)) for i, c in enumerate(row) if re.fullmatch(r"\d{1,2}", c)]
+        if len(nums) < 2:
+            return " · ".join(c for c in row if c)  # unparseable, show it raw
+        goals, goal_at = (nums[0][1], nums[1][1]), nums[0][0]
+
+    us_idx = next((i for i, c in enumerate(row) if matches(c, TEAM)), None)
+    if us_idx is None:
+        us_idx = next(
+            (i for i, c in enumerate(row) if "surf guaynabo" in norm(c)), None
+        )
+    if us_idx is None:
+        return " · ".join(c for c in row if c)
+
+    # The home side is written before the score, the away side after it.
+    ours, theirs = goals if us_idx < goal_at else (goals[1], goals[0])
+    mark = "✅" if ours > theirs else ("❌" if ours < theirs else "🟡")
+    return f"{ours}-{theirs} {mark}"
+
+
 def team_name(row: list[str]) -> str:
     """The longest cell that isn't a number: the club name."""
     words = [c for c in row if c.strip() and not re.fullmatch(r"-?\d+", c.strip())]
     return max(words, key=len).strip() if words else ""
 
 
-def fixture_text(entry: dict, t: dict) -> str:
+def fixture_text(entry: dict, t: dict, label: str = "") -> str:
     """One jornada, short enough to read in a chat bubble."""
-    lines = [entry["jornada"]]
+    lines = [label or entry["jornada"]]
     if not entry.get("verified", True):
         lines.append(f"({t['unverified']})")
     if not entry.get("row"):
         return "\n".join(lines + [t["none"]])
     for head, value in pairs(entry.get("headers", []), entry["row"]):
         lines.append(f"{head}: {value}" if head else value)
+
+    summary = result_summary(entry.get("result") or {})
+    if summary:
+        lines.append(f"{t['result']}: {summary}")
     return "\n".join(lines)
 
 
@@ -520,8 +640,21 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     t = ES if LANG.startswith("es") else EN
     es = LANG.startswith("es")
 
-    # Open on the last jornada that actually has a match for us.
-    start = max(
+    # The next fixture is the earliest one dated today or later.
+    today = datetime.now(AST).date()
+    upcoming = next(
+        (
+            i for i, f in enumerate(fixtures)
+            if f.get("row") and (fixture_date(f) or today - timedelta(days=1)) >= today
+        ),
+        None,
+    )
+    labels = [
+        f"{f['jornada']} ({t['next']})" if i == upcoming else f["jornada"]
+        for i, f in enumerate(fixtures)
+    ]
+    # Open on the upcoming jornada, else the last one with a match.
+    start = upcoming if upcoming is not None else max(
         (i for i, f in enumerate(fixtures) if f.get("row")),
         default=len(fixtures) - 1,
     )
@@ -541,6 +674,13 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
             )
         else:
             body = f"<p class=empty>{esc(t['none'])}</p>"
+
+        summary = result_summary(f.get("result") or {})
+        if summary:
+            body += (
+                f"<div class=row><span class=k>{esc(t['result'])}</span>"
+                f"<span class='v score'>{esc(summary)}</span></div>"
+            )
         cards.append(banner + body)
 
     context = [c for c in (standings.get("context") or []) if c]
@@ -572,9 +712,9 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 
     share_parts = [f"{NICK}\n{stamp()}\n"]
     payload = {
-        "labels": [f["jornada"] for f in fixtures],
+        "labels": labels,
         "cards": cards,
-        "texts": [fixture_text(f, t) for f in fixtures],
+        "texts": [fixture_text(f, t, labels[i]) for i, f in enumerate(fixtures)],
         "start": start,
         "head": "".join(share_parts),
         "gLabels": gLabels,
@@ -601,7 +741,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     background:#f4f6f8; color:#10202e;
   }}
   main {{ max-width:560px; margin:0 auto; }}
-  h1 {{ font-size:22px; margin:0 0 4px; letter-spacing:-.01em; }}
+  h1 {{ font-size:22px; margin:0 0 20px; letter-spacing:-.01em; }}
   .stamp {{
     color:#5d7080; font-size:12.5px; line-height:1.4; margin:0 0 22px;
   }}
@@ -620,11 +760,14 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     cursor:pointer;
   }}
   .nav button:disabled {{ opacity:.32; cursor:default; }}
-  .nav .label {{ flex:1; text-align:center; font-weight:600; font-size:15px; }}
-  .row {{ display:flex; gap:14px; padding:7px 0; border-top:1px solid #eef1f4; }}
+  .nav .label {{ flex:1; text-align:center; font-weight:600; font-size:14px; }}
+  .row {{ display:flex; gap:12px; padding:8px 0; border-top:1px solid #eef1f4; }}
   .row:first-child {{ border-top:0; }}
-  .k {{ flex:0 0 34%; color:#5d7080; font-size:14px; }}
-  .v {{ flex:1; font-variant-numeric:tabular-nums; }}
+  .k {{
+    flex:0 0 36%; color:#5d7080; font-size:12px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.04em; padding-top:2px;
+  }}
+  .v {{ flex:1; font-size:14px; font-variant-numeric:tabular-nums; }}
   .empty {{ color:#5d7080; margin:8px 0; }}
   .warn {{
     color:#8a4b00; background:#fdf1e0; border-radius:8px;
@@ -656,14 +799,19 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     flex:1 1 0; margin-bottom:0; padding:14px 6px; font-size:15px;
     min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }}
+  .score {{ font-weight:700; font-size:15px; }}
   .sharelabel {{
     font-size:12px; letter-spacing:.09em; text-transform:uppercase;
     color:#5d7080; font-weight:600; margin:22px 0 10px;
   }}
   .send.wa {{ background:#1f9d5b; }}
   .send.sms {{ background:#2f6fed; }}
-  footer {{ text-align:center; font-size:13px; }}
-  footer a {{ color:#5d7080; }}
+  footer {{
+    text-align:center; font-size:12.5px; line-height:1.5;
+    color:#5d7080; margin-top:26px;
+  }}
+  footer p {{ margin:0; }}
+  footer a {{ color:#5d7080; display:inline-block; margin-top:8px; }}
   @media (prefers-color-scheme: dark) {{
     body {{ background:#0b1b2b; color:#e8eef4; }}
     section {{ background:#14293c; box-shadow:none; }}
@@ -680,8 +828,6 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
 </style>
 <main>
   <h1>{esc(NICK)}</h1>
-  {context_html}
-  <p class=stamp>{esc(stamp())}</p>
 
   <section>
     <h2>{esc(t['match'])}</h2>
@@ -709,7 +855,11 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     <a class="send sms" id=sms href="#">{esc(t['sms'])}</a>
     <a class=send id=share href="#">{esc(t['share'])}</a>
   </div>
-  <footer><a href="https://ystpr.com/itinerario">ystpr.com</a></footer>
+  <footer>
+    {context_html}
+    <p class=stamp>{esc(stamp())}</p>
+    <a href="https://ystpr.com/itinerario">ystpr.com</a>
+  </footer>
 </main>
 <script>
 const D = {json.dumps(payload, ensure_ascii=False)};
