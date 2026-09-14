@@ -69,6 +69,22 @@ EN = {
     "unverified": "Could not confirm the group. Check ystpr.com.",
 }
 
+# Spanish terms the site uses, for the English view. Anything not listed is
+# left exactly as scraped, which is right for team names and venues.
+TERMS = {
+    "fecha": "Date", "hora": "Time", "local": "Home", "visitante": "Away",
+    "cancha": "Field", "sede": "Venue", "estatus": "Status", "estado": "Status",
+    "arbitro": "Referee", "equipo": "Team", "grupo": "Group",
+    "jornada": "Matchday", "division": "Division", "resultado": "Result",
+    "pj": "GP", "pg": "W", "pe": "D", "pp": "L", "gf": "GF", "gc": "GA",
+    "dif": "GD", "pts": "Pts", "puntos": "Pts",
+}
+VALUES = {
+    "finalizado": "Final", "programado": "Scheduled", "aplazado": "Postponed",
+    "suspendido": "Suspended", "cancelado": "Cancelled", "por jugar": "To play",
+    "en vivo": "Live", "descanso": "Bye",
+}
+
 # -------------------------------------------------------------------- helpers
 
 
@@ -88,14 +104,47 @@ def matches(option: str, wanted: str) -> bool:
     return bool(have) and set(norm(wanted).split()) <= have
 
 
+def like(source: str, translated: str) -> str:
+    """Give `translated` the capitalisation of `source`."""
+    letters = [c for c in source if c.isalpha()]
+    if not letters:
+        return translated
+    if all(c.isupper() for c in letters):
+        return translated.upper()
+    if all(c.islower() for c in letters):
+        return translated.lower()
+    if source[:1].isupper():
+        return translated[:1].upper() + translated[1:]
+    return translated
+
+
+def to_en(text: str) -> str:
+    """Translate the league's own vocabulary, word by word.
+
+    Unknown words pass through untouched, so club names survive intact, and
+    each translation copies the capitalisation of the word it replaces.
+    """
+    if not text:
+        return text
+    whole = VALUES.get(norm(text))
+    if whole:
+        return like(text, whole)
+    out = []
+    for word in text.split():
+        core = norm(word)
+        out.append(like(word, TERMS[core]) if core in TERMS else word)
+    return " ".join(out)
+
+
 def log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 
-def stamp() -> str:
+def stamp(lang: str = "") -> str:
+    lang = lang or LANG
     now = datetime.now(AST)
     hour = now.hour % 12 or 12
-    if LANG.startswith("es"):
+    if lang.startswith("es"):
         ampm = "a. m." if now.hour < 12 else "p. m."
         return (f"Actualizado: {now.day} de {MESES[now.month - 1]} de {now.year}"
                 f", {hour}:{now.minute:02d} {ampm}")
@@ -616,15 +665,17 @@ async def scrape():
 # ----------------------------------------------------------------- share text
 
 
-def fixture_text(entry: dict, t: dict, label: str = "") -> str:
+def fixture_text(entry: dict, t: dict, label: str = "", conv=None) -> str:
     """One jornada, short enough to read in a chat bubble."""
-    lines = [label or entry["jornada"]]
+    conv = conv or (lambda x: x)
+    lines = [label or conv(entry["jornada"])]
     if not entry.get("verified", True):
         lines.append(f"({t['unverified']})")
     if not entry.get("row"):
         return "\n".join(lines + [t["none"]])
 
     for head, value in pairs(entry.get("headers", []), entry["row"]):
+        head, value = conv(head), conv(value)
         lines.append(f"{head}: {value}" if head else value)
     summary = result_summary(entry.get("result") or {})
     if summary:
@@ -632,11 +683,12 @@ def fixture_text(entry: dict, t: dict, label: str = "") -> str:
     return "\n".join(lines)
 
 
-def standings_text(table: dict, t: dict) -> str:
+def standings_text(table: dict, t: dict, conv=None) -> str:
     """Rank and club name only. No column alignment to survive the trip."""
+    conv = conv or (lambda x: x)
     if not table:
         return f"{t['table']}\n{t['notable']}"
-    out = [f"{t['table']} ({table['group']})"]
+    out = [f"{t['table']} ({conv(table['group'])})"]
     for n, r in enumerate(table["rows"], 1):
         rank = r[0].strip() if r and re.fullmatch(r"\d+", r[0].strip()) else str(n)
         out.append(f"{rank}. {team_name(r)}")
@@ -676,7 +728,7 @@ CSS = """
   }
   main { max-width:560px; margin:0 auto; }
 
-  .top { display:flex; align-items:flex-start; gap:12px; }
+  .top { display:flex; align-items:center; gap:8px; }
   .top div { flex:1; min-width:0; }
   h1 { font-size:22px; margin:0 0 2px; letter-spacing:-.01em; }
   .subtitle, h2, .sharelabel {
@@ -684,13 +736,14 @@ CSS = """
     color:var(--muted); font-weight:600;
   }
   .subtitle { margin:0; }
-  #theme {
-    flex:0 0 auto; width:38px; height:38px; padding:0; border:0;
+  .iconbtn {
+    flex:0 0 auto; width:38px; height:38px; padding:0; margin:0; border:0;
     border-radius:10px; background:var(--chip); color:var(--chipfg);
     cursor:pointer; -webkit-appearance:none; appearance:none;
     display:flex; align-items:center; justify-content:center;
+    font-family:inherit; font-size:12px; font-weight:700; letter-spacing:.04em;
   }
-  #theme svg { display:block; width:18px; height:18px; }
+  .iconbtn svg { display:block; width:18px; height:18px; }
 
   section {
     background:var(--card); border-radius:14px; padding:14px 16px;
@@ -761,43 +814,19 @@ CSS = """
 
 JS = """
 const D = __DATA__;
-let i = D.start, g = D.gStart;
+let i = D.start, g = D.gStart, lang = D.lang;
 
 const $ = id => document.getElementById(id);
-const card = $('card'), label = $('jlabel'), prev = $('prev'), next = $('next');
+const card = $('card'), jlabel = $('jlabel'), prev = $('prev'), next = $('next');
 const gtable = $('gtable'), glabel = $('glabel');
 const gprev = $('gprev'), gnext = $('gnext');
-const share = $('share'), wa = $('wa'), sms = $('sms'), theme = $('theme');
+const share = $('share'), wa = $('wa'), sms = $('sms');
+const theme = $('theme'), langBtn = $('lang');
 
 // iOS and Android disagree on the sms: separator.
 const SEP = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? '&' : '?';
 
-function render() {
-  label.textContent = D.labels[i] || '';
-  card.innerHTML = D.cards[i] || '';
-  prev.disabled = i <= 0;
-  next.disabled = i >= D.labels.length - 1;
-
-  glabel.textContent = D.gLabels[g] || '';
-  gtable.innerHTML = D.gTables[g] || '';
-  gprev.disabled = g <= 0;
-  gnext.disabled = g >= D.gLabels.length - 1;
-
-  let body = D.head + '\\n' + D.texts[i] + '\\n\\n' + D.gTexts[g] + '\\n';
-  if (D.url) body += '\\n' + D.url + '\\n';
-  share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
-             + '&body=' + encodeURIComponent(body);
-  wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
-  sms.href = 'sms:' + SEP + 'body=' + encodeURIComponent(body);
-}
-
-function isDark() {
-  const set = document.documentElement.getAttribute('data-theme');
-  if (set) return set === 'dark';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-// Inline SVG rather than ☀/☾ glyphs, whose metrics vary by fallback font.
+// Inline SVG rather than sun and moon glyphs, whose metrics vary by font.
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
      + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -808,25 +837,74 @@ const ICON = {
       + '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
 };
 
-function paint() { theme.innerHTML = isDark() ? ICON.sun : ICON.moon; }
+function store(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
-try {
-  const saved = localStorage.getItem('theme');
-  if (saved) document.documentElement.setAttribute('data-theme', saved);
-} catch (e) {}
+function isDark() {
+  const set = document.documentElement.getAttribute('data-theme');
+  if (set) return set === 'dark';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function render() {
+  const L = D[lang];
+
+  $('matchTitle').textContent = L.matchTitle;
+  $('tableTitle').textContent = L.tableTitle;
+  $('fxSub').textContent = L.fxSub;
+  $('stSub').textContent = L.stSub;
+  $('shareVia').textContent = L.shareVia;
+  $('stamp').textContent = L.stamp;
+  wa.textContent = L.btnWa;
+  sms.textContent = L.btnSms;
+  share.textContent = L.btnMail;
+
+  jlabel.textContent = L.labels[i] || '';
+  card.innerHTML = L.cards[i] || '';
+  prev.disabled = i <= 0;
+  next.disabled = i >= L.labels.length - 1;
+
+  glabel.textContent = L.gLabels[g] || '';
+  gtable.innerHTML = L.gTables[g] || '';
+  gprev.disabled = g <= 0;
+  gnext.disabled = g >= L.gLabels.length - 1;
+
+  let body = L.head + '\\n' + L.texts[i] + '\\n\\n' + L.gTexts[g] + '\\n';
+  if (D.url) body += '\\n' + D.url + '\\n';
+  share.href = 'mailto:?subject=' + encodeURIComponent(L.subject)
+             + '&body=' + encodeURIComponent(body);
+  wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
+  sms.href = 'sms:' + SEP + 'body=' + encodeURIComponent(body);
+
+  document.documentElement.setAttribute('lang', lang);
+  langBtn.textContent = lang === 'es' ? 'EN' : 'ES';
+  langBtn.setAttribute('aria-label',
+    lang === 'es' ? 'Switch to English' : 'Cambiar a espanol');
+  theme.innerHTML = isDark() ? ICON.sun : ICON.moon;
+}
+
+const savedTheme = recall('theme');
+if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+const savedLang = recall('lang');
+if (savedLang === 'es' || savedLang === 'en') lang = savedLang;
 
 prev.onclick = () => { if (i > 0) { i--; render(); } };
-next.onclick = () => { if (i < D.labels.length - 1) { i++; render(); } };
+next.onclick = () => { if (i < D[lang].labels.length - 1) { i++; render(); } };
 gprev.onclick = () => { if (g > 0) { g--; render(); } };
-gnext.onclick = () => { if (g < D.gLabels.length - 1) { g++; render(); } };
+gnext.onclick = () => { if (g < D[lang].gLabels.length - 1) { g++; render(); } };
+
 theme.onclick = () => {
   const mode = isDark() ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', mode);
-  try { localStorage.setItem('theme', mode); } catch (e) {}
-  paint();
+  store('theme', mode);
+  render();
+};
+langBtn.onclick = () => {
+  lang = lang === 'es' ? 'en' : 'es';
+  store('lang', lang);
+  render();
 };
 
-paint();
 render();
 """
 
@@ -850,24 +928,24 @@ def our_group(standings: dict) -> dict:
     return tables[0] if tables else {}
 
 
-def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
-    t = ES if LANG.startswith("es") else EN
-    lang = "es" if LANG.startswith("es") else "en"
+def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
+    """Everything the page shows, rendered in one language."""
+    t = ES if lang == "es" else EN
+    conv = (lambda x: x) if lang == "es" else to_en
 
     upcoming = upcoming_index(fixtures)
-    labels = [f"{f['jornada']} ({t['next']})" if i == upcoming else f["jornada"]
-              for i, f in enumerate(fixtures)]
-    start = upcoming if upcoming is not None else max(
-        (i for i, f in enumerate(fixtures) if f["row"]), default=len(fixtures) - 1
-    )
+    labels = [
+        f"{conv(f['jornada'])} ({t['next']})" if i == upcoming else conv(f["jornada"])
+        for i, f in enumerate(fixtures)
+    ]
 
     cards = []
     for f in fixtures:
         body = "" if f["verified"] else f"<p class=warn>{esc(t['unverified'])}</p>"
         if f["row"]:
             body += "".join(
-                f"<div class=row><span class=k>{esc(h)}</span>"
-                f"<span class=v>{esc(v)}</span></div>"
+                f"<div class=row><span class=k>{esc(conv(h))}</span>"
+                f"<span class=v>{esc(conv(v))}</span></div>"
                 for h, v in pairs(f["headers"], f["row"])
             )
             summary = result_summary(f["result"])
@@ -878,48 +956,77 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
             body += f"<p class=empty>{esc(t['none'])}</p>"
         cards.append(body)
 
-    gLabels, gTables, gTexts, gStart = [], [], [], 0
-    for n, tb in enumerate(standings.get("tables", [])):
-        if any(any(matches(c, TEAM) for c in r) for r in tb["rows"]):
-            gStart = n  # open on the group our team plays in
-        head = "".join(f"<th>{esc(h)}</th>" for h in tb["headers"])
+    gLabels, gTables, gTexts = [], [], []
+    for tb in standings.get("tables", []):
+        head = "".join(f"<th>{esc(conv(h))}</th>" for h in tb["headers"])
         rows = "".join(
             f"<tr{' class=mine' if any(matches(c, TEAM) for c in r) else ''}>"
-            + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>"
+            + "".join(f"<td>{esc(conv(c))}</td>" for c in r) + "</tr>"
             for r in tb["rows"]
         )
-        gLabels.append(tb["group"])
+        gLabels.append(conv(tb["group"]))
         gTables.append(f"<div class=scroll><table><thead><tr>{head}</tr></thead>"
                        f"<tbody>{rows}</tbody></table></div>")
-        gTexts.append(standings_text(tb, t))
+        gTexts.append(standings_text(tb, t, conv))
     if not gLabels:
         gLabels = [""]
         gTables = [f"<p class=empty>{esc(t['notable'])}</p>"]
         gTexts = [f"{t['table']}\n{t['notable']}"]
 
     seen = next((f for f in fixtures if f["verified"]), {})
-    fx_sub = " · ".join(x for x in (seen.get("division") or DIVISION,
-                                    seen.get("group") or GROUP) if x)
     context = [c for c in standings.get("context", []) if c]
-    st_sub = context[1] if len(context) > 1 else DIVISION
+    when = stamp(lang)
 
-    data = {
+    return {
         "labels": labels,
         "cards": cards,
-        "texts": [fixture_text(f, t, labels[i]) for i, f in enumerate(fixtures)],
-        "start": start,
+        "texts": [fixture_text(f, t, labels[i], conv)
+                  for i, f in enumerate(fixtures)],
         "gLabels": gLabels,
         "gTables": gTables,
         "gTexts": gTexts,
+        "fxSub": " · ".join(x for x in (conv(seen.get("division") or DIVISION),
+                                        conv(seen.get("group") or GROUP)) if x),
+        "stSub": conv(context[1] if len(context) > 1 else DIVISION),
+        "matchTitle": t["match"],
+        "tableTitle": t["table"],
+        "shareVia": t["shareVia"],
+        "btnWa": t["wa"],
+        "btnSms": t["sms"],
+        "btnMail": t["share"],
+        "stamp": when,
+        "head": f"{NICK}\n{when}\n",
+        "subject": f"{NICK} - {when}",
+    }
+
+
+def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
+    default = "es" if LANG.startswith("es") else "en"
+
+    start = upcoming_index(fixtures)
+    if start is None:
+        start = max((i for i, f in enumerate(fixtures) if f["row"]),
+                    default=len(fixtures) - 1)
+
+    gStart = 0
+    for n, tb in enumerate(standings.get("tables", [])):
+        if any(any(matches(c, TEAM) for c in r) for r in tb["rows"]):
+            gStart = n  # open on the group our team plays in
+
+    data = {
+        "es": build_variant(fixtures, standings, "es"),
+        "en": build_variant(fixtures, standings, "en"),
+        "lang": default,
+        "start": start,
         "gStart": gStart,
-        "head": f"{NICK}\n{stamp()}\n",
-        "subject": f"{NICK} - {stamp()}",
         "url": page_url(),
+        "nick": NICK,
+        "subtitle": SUBTITLE,
     }
     script = JS.replace("__DATA__", json.dumps(data, ensure_ascii=False))
 
     PAGE.write_text(f"""<!doctype html>
-<html lang="{lang}" data-digest="{fingerprint}">
+<html lang="{default}" data-digest="{fingerprint}">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -931,40 +1038,41 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
       <h1>{esc(NICK)}</h1>
       <p class=subtitle>{esc(SUBTITLE)}</p>
     </div>
-    <button id=theme aria-label="tema"></button>
+    <button id=lang class=iconbtn></button>
+    <button id=theme class=iconbtn aria-label="theme"></button>
   </div>
 
   <section>
-    <h2>{esc(t['match'])}</h2>
-    <p class=sub>{esc(fx_sub)}</p>
+    <h2 id=matchTitle></h2>
+    <p class=sub id=fxSub></p>
     <div class=nav>
-      <button id=prev aria-label="anterior">&lsaquo;</button>
+      <button id=prev aria-label="previous">&lsaquo;</button>
       <span class=label id=jlabel></span>
-      <button id=next aria-label="siguiente">&rsaquo;</button>
+      <button id=next aria-label="next">&rsaquo;</button>
     </div>
     <div id=card></div>
   </section>
 
   <section>
-    <h2>{esc(t['table'])}</h2>
-    <p class=sub>{esc(st_sub)}</p>
+    <h2 id=tableTitle></h2>
+    <p class=sub id=stSub></p>
     <div class=nav>
-      <button id=gprev aria-label="grupo anterior">&lsaquo;</button>
+      <button id=gprev aria-label="previous group">&lsaquo;</button>
       <span class=label id=glabel></span>
-      <button id=gnext aria-label="grupo siguiente">&rsaquo;</button>
+      <button id=gnext aria-label="next group">&rsaquo;</button>
     </div>
     <div id=gtable></div>
   </section>
 
-  <p class=sharelabel>{esc(t['shareVia'])}</p>
+  <p class=sharelabel id=shareVia></p>
   <div class=actions>
-    <a class=wa id=wa href="#">{esc(t['wa'])}</a>
-    <a class=sms id=sms href="#">{esc(t['sms'])}</a>
-    <a id=share href="#">{esc(t['share'])}</a>
+    <a class=wa id=wa href="#"></a>
+    <a class=sms id=sms href="#"></a>
+    <a id=share href="#"></a>
   </div>
 
   <footer>
-    <p>{esc(stamp())}</p>
+    <p id=stamp></p>
     <a href="https://ystpr.com/itinerario">ystpr.com</a>
   </footer>
 </main>
@@ -1021,8 +1129,14 @@ def send_email(subject: str, body: str) -> bool:
     return True
 
 
-def notify(fixtures: list, standings: dict, t: dict) -> None:
-    """Email when a jornada appears or our group's order changes."""
+def notify(fixtures: list, standings: dict) -> None:
+    """Email when a jornada appears or our group's order changes.
+
+    Sent in the build-time language, since email has no toggle to click.
+    """
+    t = ES if LANG.startswith("es") else EN
+    conv = (lambda x: x) if LANG.startswith("es") else to_en
+
     now, before = snapshot(fixtures, standings), load_state()
     STATE.write_text(json.dumps(now, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -1031,30 +1145,26 @@ def notify(fixtures: list, standings: dict, t: dict) -> None:
         return
 
     new = [j for j in now["jornadas"] if j not in before.get("jornadas", [])]
-    moved = (
-        bool(now["ranking"])
-        and bool(before.get("ranking"))
-        and now["ranking"] != before["ranking"]
-    )
+    moved = (bool(now["ranking"]) and bool(before.get("ranking"))
+             and now["ranking"] != before["ranking"])
     if not new and not moved:
         log("No new jornadas and no ranking change")
         return
 
-    subject = " / ".join(
-        s for s in ((t["mailNew"] if new else ""), (t["mailRank"] if moved else ""))
-        if s
-    )
+    subject = " / ".join(x for x in ((t["mailNew"] if new else ""),
+                                     (t["mailRank"] if moved else "")) if x)
     lines = [NICK, stamp(), ""]
     if new:
-        lines += [f"{t['newJornadas']}: {', '.join(new)}", ""]
+        lines += [f"{t['newJornadas']}: {', '.join(conv(j) for j in new)}", ""]
 
     i = upcoming_index(fixtures)
     if i is not None:
-        label = f"{fixtures[i]['jornada']} ({t['next']})"
-        lines += [fixture_text(fixtures[i], t, label), ""]
+        label = f"{conv(fixtures[i]['jornada'])} ({t['next']})"
+        lines += [fixture_text(fixtures[i], t, label, conv), ""]
     if moved:
-        lines += [standings_text(our_group(standings), t), ""]
-    if url := page_url():
+        lines += [standings_text(our_group(standings), t, conv), ""]
+    url = page_url()
+    if url:
         lines.append(url)
 
     send_email(f"{NICK} - {subject}", "\n".join(lines))
@@ -1095,7 +1205,7 @@ def main() -> None:
     write_page(fixtures, standings, fingerprint)
     log("Data changed." if changed else "Timestamp only, no data change.")
 
-    notify(fixtures, standings, ES if LANG.startswith("es") else EN)
+    notify(fixtures, standings)
 
     # Lets the workflow label the commit.
     out = os.environ.get("GITHUB_OUTPUT")
