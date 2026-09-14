@@ -24,7 +24,7 @@ from playwright.async_api import async_playwright
 
 TEAM = os.environ.get("TEAM", "SURF GUAYNABO U10 2016 Black")
 TOURNAMENT = os.environ.get("TOURNAMENT", "CHAMPIONSHIP")
-DIVISION = os.environ.get("DIVISION", "TC 2016 U10 DIVISION 2 - Fase 1")
+DIVISION = os.environ.get("DIVISION", "TC 2026 U10 DIVISION 2 - Fase 1")
 GROUP = os.environ.get("GROUP", "Grupo A")
 
 SCHEDULE_URL = "https://ystpr.com/itinerario"
@@ -42,10 +42,21 @@ DEBUG = Path("debug")
 
 
 def norm(s: str) -> str:
-    """Lowercase, strip accents, collapse whitespace. For fuzzy text matching."""
+    """Lowercase, strip accents, drop all punctuation. For fuzzy text matching."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^a-zA-Z0-9]+", " ", s)
     return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def matches(option: str, wanted: str) -> bool:
+    """True when every word of `wanted` appears in `option`.
+
+    Deliberately punctuation-blind, so 'DIVISION 2 - Fase 1' still matches
+    'DIVISION 2 - Fase 1' rendered with an en dash, extra spaces, or an accent.
+    """
+    have = set(norm(option).split())
+    return bool(have) and set(norm(wanted).split()) <= have
 
 
 def log(msg: str) -> None:
@@ -61,21 +72,39 @@ async def settle(page, ms: int = 900) -> None:
     await page.wait_for_timeout(ms)
 
 
+async def list_controls(page) -> list[str]:
+    """Every option text currently on the page, for diagnostics."""
+    found: list[str] = []
+    selects = page.locator("select")
+    for i in range(await selects.count()):
+        try:
+            opts = await selects.nth(i).locator("option").all_inner_texts()
+        except Exception:
+            continue
+        found += [f"select[{i}]: {o.strip()}" for o in opts if o.strip()]
+    try:
+        for t in await page.get_by_role("option").all_inner_texts():
+            if t.strip():
+                found.append(f"option: {t.strip()}")
+    except Exception:
+        pass
+    return found
+
+
 async def choose(page, wanted: str, latest: bool = False) -> str | None:
     """
     Pick an option matching `wanted` from whatever control holds it.
 
-    Tries native <select>, then ARIA comboboxes, then plain clickable text.
-    With latest=True, picks the highest-numbered match (used for "jornada").
+    Matching ignores punctuation, accents and spacing, so only the words
+    have to line up. With latest=True, picks the highest-numbered match.
     """
-    pat = re.compile(re.escape(wanted), re.I)
 
     def rank(text: str) -> int:
         nums = re.findall(r"\d+", text)
         return int(nums[-1]) if nums else -1
 
-    def best(items: list[str]) -> str:
-        return max(items, key=rank) if latest else items[0]
+    def best(items: list[tuple[int, str]]) -> tuple[int, str]:
+        return max(items, key=lambda x: rank(x[1])) if latest else items[0]
 
     # 1. native <select>
     selects = page.locator("select")
@@ -85,13 +114,13 @@ async def choose(page, wanted: str, latest: bool = False) -> str | None:
             opts = await sel.locator("option").all_inner_texts()
         except Exception:
             continue
-        hits = [o for o in opts if norm(wanted) in norm(o)]
+        hits = [(j, o) for j, o in enumerate(opts) if matches(o, wanted)]
         if hits:
-            pick = best(hits)
-            await sel.select_option(label=pick)
+            idx, text = best(hits)
+            await sel.select_option(index=idx)  # by index, not by label text
             await settle(page)
-            log(f"  selected '{pick.strip()}' from a dropdown")
-            return pick.strip()
+            log(f"  selected '{text.strip()}'")
+            return text.strip()
 
     # 2. custom dropdown: open the trigger, then click the option
     triggers = page.get_by_role("combobox")
@@ -100,41 +129,46 @@ async def choose(page, wanted: str, latest: bool = False) -> str | None:
             await triggers.nth(i).click(timeout=2500)
         except Exception:
             continue
-        await page.wait_for_timeout(400)
-        opts = page.get_by_role("option", name=pat)
-        if await opts.count():
+        await page.wait_for_timeout(500)
+        opts = page.get_by_role("option")
+        try:
             texts = await opts.all_inner_texts()
-            pick = best([t for t in texts if t.strip()])
-            await page.get_by_role("option", name=re.compile(re.escape(pick.strip()), re.I)).first.click()
+        except Exception:
+            texts = []
+        hits = [(j, t) for j, t in enumerate(texts) if matches(t, wanted)]
+        if hits:
+            idx, text = best(hits)
+            await opts.nth(idx).click()
             await settle(page)
-            log(f"  clicked '{pick.strip()}' in a custom dropdown")
-            return pick.strip()
+            log(f"  clicked '{text.strip()}'")
+            return text.strip()
         try:
             await page.keyboard.press("Escape")
         except Exception:
             pass
 
     # 3. plain clickable text on the page
-    loc = page.get_by_text(pat)
-    count = await loc.count()
-    if count:
-        texts = await loc.all_inner_texts()
-        # Prefer the shortest match: that's the label itself, not a wrapper div.
-        candidates = sorted(
-            [(t, i) for i, t in enumerate(texts) if t.strip()],
-            key=lambda x: (rank(x[0]) * -1, len(x[0])) if latest else (len(x[0]),),
-        )
-        if candidates:
-            _, idx = candidates[0]
-            try:
-                await loc.nth(idx).click(timeout=2500)
-                await settle(page)
-                log(f"  clicked text '{texts[idx].strip()[:60]}'")
-                return texts[idx].strip()
-            except Exception:
-                pass
+    try:
+        body_bits = page.locator("li, a, button, td, div[role], span")
+        texts = await body_bits.all_inner_texts()
+    except Exception:
+        texts = []
+    hits = [(j, t) for j, t in enumerate(texts) if t.strip() and matches(t, wanted)]
+    if hits:
+        # Shortest match is the label itself rather than a wrapper element.
+        hits.sort(key=lambda x: (-rank(x[1]), len(x[1])) if latest else (len(x[1]),))
+        idx, text = hits[0]
+        try:
+            await body_bits.nth(idx).click(timeout=2500)
+            await settle(page)
+            log(f"  clicked text '{text.strip()[:60]}'")
+            return text.strip()
+        except Exception:
+            pass
 
-    log(f"  !! could not find a control for '{wanted}'")
+    log(f"  !! no control matched '{wanted}'. Options visible right now:")
+    for line in await list_controls(page):
+        log(f"       {line}")
     return None
 
 
