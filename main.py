@@ -685,10 +685,12 @@ CSS = """
   }
   .subtitle { margin:0; }
   #theme {
-    flex:0 0 auto; width:38px; height:38px; border:0; border-radius:10px;
-    background:var(--chip); color:var(--chipfg); font-size:17px;
-    line-height:1; cursor:pointer;
+    flex:0 0 auto; width:38px; height:38px; padding:0; border:0;
+    border-radius:10px; background:var(--chip); color:var(--chipfg);
+    cursor:pointer; -webkit-appearance:none; appearance:none;
+    display:flex; align-items:center; justify-content:center;
   }
+  #theme svg { display:block; width:18px; height:18px; }
 
   section {
     background:var(--card); border-radius:14px; padding:14px 16px;
@@ -700,9 +702,10 @@ CSS = """
 
   .nav { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
   .nav button {
-    flex:0 0 40px; height:40px; border:0; border-radius:10px;
+    flex:0 0 40px; height:40px; padding:0; border:0; border-radius:10px;
     background:var(--chip); color:var(--chipfg); font-size:20px;
-    line-height:1; cursor:pointer;
+    cursor:pointer; -webkit-appearance:none; appearance:none;
+    display:flex; align-items:center; justify-content:center;
   }
   .nav button:disabled { opacity:.32; cursor:default; }
   .nav .label { flex:1; text-align:center; font-weight:600; font-size:14px; }
@@ -794,7 +797,18 @@ function isDark() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
-function paint() { theme.textContent = isDark() ? '\\u2600' : '\\u263E'; }
+// Inline SVG rather than ☀/☾ glyphs, whose metrics vary by fallback font.
+const ICON = {
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+     + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+     + '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4'
+     + 'M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+      + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
+};
+
+function paint() { theme.innerHTML = isDark() ? ICON.sun : ICON.moon; }
 
 try {
   const saved = localStorage.getItem('theme');
