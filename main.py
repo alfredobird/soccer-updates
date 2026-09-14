@@ -402,11 +402,11 @@ async def scrape():
 
 ES = {"match": "Partido", "table": "Tabla de posiciones",
       "none": "Sin partido en esta jornada.", "share": "Email",
-      "wa": "WhatsApp", "shareVia": "Compartir vía:",
+      "wa": "WhatsApp", "sms": "Texto", "shareVia": "Compartir vía:",
       "notable": "Tabla no disponible."}
 EN = {"match": "Match", "table": "Standings",
       "none": "No match this jornada.", "share": "Email",
-      "wa": "WhatsApp", "shareVia": "Share via:",
+      "wa": "WhatsApp", "sms": "Text", "shareVia": "Share via:",
       "notable": "Standings unavailable."}
 
 
@@ -588,13 +588,17 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     padding:14px 18px; font-size:16px; font-weight:500; margin-bottom:16px;
   }}
   .send:active {{ opacity:.75; }}
-  .actions {{ display:flex; gap:10px; margin-bottom:16px; }}
-  .actions .send {{ flex:1 1 0; margin-bottom:0; }}
+  .actions {{ display:flex; gap:8px; margin-bottom:16px; }}
+  .actions .send {{
+    flex:1 1 0; margin-bottom:0; padding:14px 6px; font-size:15px;
+    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }}
   .sharelabel {{
     font-size:12px; letter-spacing:.09em; text-transform:uppercase;
     color:#5d7080; font-weight:600; margin:22px 0 10px;
   }}
   .send.wa {{ background:#1f9d5b; }}
+  .send.sms {{ background:#2f6fed; }}
   footer {{ text-align:center; font-size:13px; }}
   footer a {{ color:#5d7080; }}
   @media (prefers-color-scheme: dark) {{
@@ -606,6 +610,8 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
     tr.mine td {{ background:#1d3f63; }}
     .send {{ background:#2f6fed; }}
     .send.wa {{ background:#1f9d5b; }}
+    .send.sms {{ background:#2f6fed; }}
+  .send.sms {{ background:#2f6fed; }}
   }}
 </style>
 <main>
@@ -633,6 +639,7 @@ def write_page(fixtures: list[dict], standings: dict, fp: str) -> None:
   <p class=sharelabel>{esc(t['shareVia'])}</p>
   <div class=actions>
     <a class="send wa" id=wa href="#">{esc(t['wa'])}</a>
+    <a class="send sms" id=sms href="#">{esc(t['sms'])}</a>
     <a class=send id=share href="#">{esc(t['share'])}</a>
   </div>
   <footer><a href="https://ystpr.com/itinerario">ystpr.com</a></footer>
@@ -646,6 +653,9 @@ const prev = document.getElementById('prev');
 const next = document.getElementById('next');
 const share = document.getElementById('share');
 const wa = document.getElementById('wa');
+const sms = document.getElementById('sms');
+// iOS and Android disagree on the sms: separator; this form satisfies both.
+const SMS_SEP = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? '&' : '?';
 
 function render() {{
   label.textContent = D.labels[i] || '';
@@ -657,6 +667,7 @@ function render() {{
   share.href = 'mailto:?subject=' + encodeURIComponent(D.subject)
              + '&body=' + encodeURIComponent(body);
   wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
+  sms.href = 'sms:' + SMS_SEP + 'body=' + encodeURIComponent(body);
 }}
 prev.onclick = () => {{ if (i > 0) {{ i--; render(); }} }};
 next.onclick = () => {{ if (i < D.labels.length - 1) {{ i++; render(); }} }};
