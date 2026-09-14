@@ -8,7 +8,7 @@ last check, not the last change. Commits are labelled `data:` when the
 fixtures, results or standings actually moved, and `refresh:` when only the
 clock did.
 
-Live page: `https://<your-username>.github.io/soccer-updates`
+Live page: `https://alfredobird.github.io/soccer-updates`
 
 No server, no accounts, no cost. GitHub Actions runs the scrape and GitHub
 Pages serves the result.
