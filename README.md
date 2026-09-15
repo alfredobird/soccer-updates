@@ -8,7 +8,7 @@ last check, not the last change. Commits are labelled `data:` when the
 fixtures, results or standings actually moved, and `refresh:` when only the
 clock did.
 
-Live page: `https://alfredobird.github.io/soccer-updates`
+Live page: `https://<your-username>.github.io/soccer-updates`
 
 No server, no accounts, no cost. GitHub Actions runs the scrape and GitHub
 Pages serves the result.
@@ -73,6 +73,7 @@ a first run.
 | `.github/workflows/updates.yml` | Runs it on a schedule and commits changes |
 | `index.html` | Generated. Never edit by hand, every run overwrites it |
 | `state.json` | Generated. What the last email alert was based on |
+| `icon.png` | Home-screen icon and link-preview image. Static, upload once |
 
 ## Setup
 
@@ -80,7 +81,9 @@ a first run.
    paid plan, so making it private breaks the site.
 2. Settings > Pages > Source: *Deploy from a branch*, branch `main`, folder `/ (root)`.
 3. Settings > Actions > General > Workflow permissions: **Read and write**.
-4. Actions tab > soccer-updates > Run workflow.
+4. Upload `icon.png` to the repo root (Add file > Upload files). It never
+   changes, so this is one-time.
+5. Actions tab > soccer-updates > Run workflow.
 
 ## Configuration
 
