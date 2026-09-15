@@ -420,6 +420,49 @@ async def choose_in_dropdown(page, wanted: str, stem: str):
     return None
 
 
+# The jornada picker is a Kendo toggle-button group: the active button carries
+# aria-pressed="true", which is a real signal rather than a guess.
+_JS_TABS = """() => {
+  const out = [];
+  document.querySelectorAll('button, [role=tab]').forEach(b => {
+    const t = (b.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (!/jornada/i.test(t) || t.length > 30) return;
+    out.push({
+      text: t,
+      pressed: b.getAttribute('aria-pressed') === 'true',
+      disabled: b.disabled || b.getAttribute('aria-disabled') === 'true'
+                || b.className.includes('k-disabled')
+    });
+  });
+  return out;
+}"""
+
+
+async def jornada_tabs(page) -> list[dict]:
+    try:
+        return await page.evaluate(_JS_TABS)
+    except Exception as e:
+        log(f"  (tab read failed: {e})")
+        return []
+
+
+async def select_jornada(page, label: str) -> bool:
+    """Click a jornada button and confirm it actually became the active one."""
+    exact = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
+    try:
+        btn = page.get_by_role("button", name=exact)
+        if await btn.count():
+            await btn.first.click(timeout=3000)
+            await settle(page)
+    except Exception:
+        pass
+
+    for tab in await jornada_tabs(page):
+        if norm(tab["text"]) == norm(label):
+            return bool(tab["pressed"])
+    return False
+
+
 async def option_labels(page, keyword: str) -> list[str]:
     """Every option mentioning `keyword`, in the site's own order."""
     selects = page.locator("select")
@@ -679,7 +722,16 @@ async def get_fixtures(page) -> list[dict]:
         log(f"       {line}")
 
     await choose(page, TOURNAMENT)
-    labels = (await option_labels(page, "jornada"))[:MAX_JORNADAS]
+
+    tabs = await jornada_tabs(page)
+    if tabs:
+        skipped = [t["text"] for t in tabs if t["disabled"]]
+        if skipped:
+            log(f"  ignoring disabled jornadas: {', '.join(skipped)}")
+        labels = [t["text"] for t in tabs if not t["disabled"]]
+    else:
+        labels = await option_labels(page, "jornada")
+    labels = labels[:MAX_JORNADAS]
     if not labels:
         log("  !! found no jornada options")
         await dump(page, "schedule")
@@ -694,13 +746,10 @@ async def get_fixtures(page) -> list[dict]:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        picked = (await choose_in_dropdown(page, label, "jornada")
-                  or await choose(page, label))
-        if not picked:
-            log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
+        if not await select_jornada(page, label):
+            log(f"  [{n}/{len(labels)}] {label}: !! never became active, skipping")
             bad += 1
-            if n == 2:
-                await describe(page, "jornada")
+            await describe(page, "jornada")
             continue
         division = await choose(page, DIVISION, quiet=True)
         group = await choose(page, GROUP, quiet=True)
@@ -720,11 +769,10 @@ async def get_fixtures(page) -> list[dict]:
         sig = norm(" ".join(hits[0])) if hits else ""
         if sig and sig in seen:
             log(f"  [{n}/{len(labels)}] {label}: !! identical to {seen[sig]},"
-                f" the selection did not take")
-            verified = False
+                f" skipping rather than showing a duplicate")
             bad += 1
-            await describe(page, "jornada")
-        elif sig:
+            continue
+        if sig:
             seen[sig] = label
 
         out.append({
@@ -756,23 +804,25 @@ async def get_results(page, wanted: set) -> dict:
     await settle(page, 2500)
     await choose(page, TOURNAMENT)
 
-    labels = [l for l in await option_labels(page, "jornada") if l in wanted]
+    tabs = await jornada_tabs(page)
+    found = ([t["text"] for t in tabs if not t["disabled"]] if tabs
+             else await option_labels(page, "jornada"))
+    labels = [l for l in found if l in wanted]
     if not labels:
         log("  !! no matching jornadas on the results page")
         await dump(page, "results")
         return {}
     log(f"  {len(labels)} played jornadas to check")
 
-    out = {}
+    out, seen_results = {}, {}
     for n, label in enumerate(labels, 1):
         if n > 1:
             await page.goto(RESULTS_URL, wait_until="domcontentloaded")
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not (await choose_in_dropdown(page, label, "jornada")
-                or await choose(page, label, quiet=True)):
-            log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
+        if not await select_jornada(page, label):
+            log(f"  [{n}/{len(labels)}] {label}: !! never became active, skipping")
             continue
         await choose(page, DIVISION, quiet=True)
         await choose(page, GROUP, quiet=True)
@@ -782,7 +832,13 @@ async def get_results(page, wanted: set) -> dict:
         if not rows:
             rows = await read_cells(page)
         hits = our_rows(rows)
+        sig = norm(" ".join(hits[0])) if hits else ""
+        if sig and sig in seen_results:
+            log(f"  [{n}/{len(labels)}] {label}: !! identical to"
+                f" {seen_results[sig]}, skipping")
+            continue
         if hits:
+            seen_results[sig] = label
             out[label] = {"row": hits[0]}
             log(f"  [{n}/{len(labels)}] {label}: {' | '.join(hits[0])}")
         else:
