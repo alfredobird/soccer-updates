@@ -981,7 +981,8 @@ function render() {
 
   let body = L.head + '\\n' + L.texts[i] + '\\n\\n' + L.gTexts[g] + '\\n';
   if (D.url) body += '\\n' + D.url + '\\n';
-  share.href = 'mailto:?subject=' + encodeURIComponent(L.subject)
+  const subject = L.labels[i] ? D.nick + ' - ' + L.labels[i] : D.nick;
+  share.href = 'mailto:?subject=' + encodeURIComponent(subject)
              + '&body=' + encodeURIComponent(body);
   wa.href = 'https://wa.me/?text=' + encodeURIComponent(body);
   sms.href = 'sms:' + SEP + 'body=' + encodeURIComponent(body);
@@ -1123,8 +1124,7 @@ def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
         "btnSms": t["sms"],
         "btnMail": t["share"],
         "stamp": when,
-        "head": f"{NICK}\n{when}\n",
-        "subject": f"{NICK} - {when}",
+        "head": f"{NICK}\n",
     }
 
 
@@ -1160,7 +1160,8 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
     body = f"{D['head']}\n{D['texts'][start]}\n\n{D['gTexts'][gStart]}\n"
     if url:
         body += f"\n{url}\n"
-    mailto = ("mailto:?subject=" + quote(D["subject"]) + "&body=" + quote(body))
+    subject = f"{NICK} - {D['labels'][start]}" if D["labels"] else NICK
+    mailto = "mailto:?subject=" + quote(subject) + "&body=" + quote(body)
     whats = "https://wa.me/?text=" + quote(body)
     text_link = "sms:?body=" + quote(body)
 
@@ -1186,8 +1187,8 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
 <meta property="og:title" content="{esc(NICK)}">
 <meta property="og:description" content="{esc(blurb)}">
 <meta property="og:image" content="{esc(icon)}">
-<meta property="og:image:width" content="512">
-<meta property="og:image:height" content="512">
+<meta property="og:image:width" content="180">
+<meta property="og:image:height" content="180">
 {f'<meta property="og:url" content="{esc(url)}">' if url else ''}
 <meta name="twitter:card" content="summary">
 <title>{esc(NICK)}</title>
