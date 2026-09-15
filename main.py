@@ -906,6 +906,8 @@ CSS = """
 JS = """
 const D = __DATA__;
 let i = D.start, g = D.gStart, lang = D.lang;
+// Track what was last painted so only the section that changed re-animates.
+let lastI = null, lastG = null, lastLang = null;
 
 const $ = id => document.getElementById(id);
 const card = $('card'), jlabel = $('jlabel'), prev = $('prev'), next = $('next');
@@ -937,6 +939,12 @@ function isDark() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
+function replay(el) {
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = '';
+}
+
 function render() {
   const L = D[lang];
 
@@ -950,17 +958,26 @@ function render() {
   sms.textContent = L.btnSms;
   share.textContent = L.btnMail;
 
-  jlabel.textContent = L.labels[i] || '';
-  card.innerHTML = L.cards[i] || '';
-  card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
+  const first = lastLang === null;
+  const langChanged = lang !== lastLang;
+
+  if (langChanged || i !== lastI) {
+    jlabel.textContent = L.labels[i] || '';
+    card.innerHTML = L.cards[i] || '';
+    if (!first) replay(card);
+  }
   prev.disabled = i <= 0;
   next.disabled = i >= L.labels.length - 1;
 
-  glabel.textContent = L.gLabels[g] || '';
-  gtable.innerHTML = L.gTables[g] || '';
-  gtable.style.animation = 'none'; void gtable.offsetWidth; gtable.style.animation = '';
+  if (langChanged || g !== lastG) {
+    glabel.textContent = L.gLabels[g] || '';
+    gtable.innerHTML = L.gTables[g] || '';
+    if (!first) replay(gtable);
+  }
   gprev.disabled = g <= 0;
   gnext.disabled = g >= L.gLabels.length - 1;
+
+  lastI = i; lastG = g; lastLang = lang;
 
   let body = L.head + '\\n' + L.texts[i] + '\\n\\n' + L.gTexts[g] + '\\n';
   if (D.url) body += '\\n' + D.url + '\\n';
