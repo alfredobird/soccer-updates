@@ -18,6 +18,7 @@ import unicodedata
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from playwright.async_api import async_playwright
 
@@ -764,7 +765,8 @@ CSS = """
     --bg:#f4f6f8; --fg:#10202e; --muted:#5d7080; --card:#fff;
     --line:#eef1f4; --mine:#eaf1fd; --chip:#eef1f4; --chiphi:#dfe5ea;
     --chipfg:#10202e; --btn:#10202e; --wa:#1f9d5b; --sms:#2f6fed;
-    --warnfg:#8a4b00; --warnbg:#fdf1e0; --shadow:0 1px 3px rgba(16,32,46,.10);
+    --warnfg:#8a4b00; --warnbg:#fdf1e0; --good:#15794a; --bad:#b4331f;
+    --shadow:0 1px 3px rgba(16,32,46,.10);
   }
   :root[data-theme=dark],
   :root:not([data-theme=light]) {
@@ -775,32 +777,37 @@ CSS = """
       --bg:#0b1b2b; --fg:#e8eef4; --muted:#90a6b8; --card:#14293c;
       --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chiphi:#2a4a6b;
       --chipfg:#e8eef4; --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12;
-      --shadow:none;
+      --good:#5bd39a; --bad:#ff8f7a; --shadow:none;
     }
   }
   :root[data-theme=dark] {
     --bg:#0b1b2b; --fg:#e8eef4; --muted:#90a6b8; --card:#14293c;
     --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chiphi:#2a4a6b;
     --chipfg:#e8eef4; --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12;
-    --shadow:none;
+    --good:#5bd39a; --bad:#ff8f7a; --shadow:none;
   }
 
   * { box-sizing:border-box; }
   body {
-    margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--fg);
+    margin:0; background:var(--bg); color:var(--fg);
     font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    padding:24px 16px 48px;
+    padding-left:max(16px, env(safe-area-inset-left));
+    padding-right:max(16px, env(safe-area-inset-right));
+    padding-top:max(24px, env(safe-area-inset-top));
+    padding-bottom:max(48px, env(safe-area-inset-bottom));
+    -webkit-text-size-adjust:100%;
   }
   main { max-width:560px; margin:0 auto; }
 
   .top { display:flex; align-items:center; gap:8px; }
-  .top div { flex:1; min-width:0; }
-  h1 { font-size:22px; margin:0 0 2px; letter-spacing:-.01em; }
+  h1 { flex:1; min-width:0; font-size:22px; margin:0; letter-spacing:-.01em; }
   .subtitle, h2, .sharelabel {
     font-size:12px; letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); font-weight:600;
   }
   .subtitle { margin:0; }
-  .stamp { color:var(--muted); font-size:12.5px; line-height:1.4; margin:3px 0 0; }
+  .stamp { color:var(--muted); font-size:12.5px; line-height:1.4; margin:2px 0 0; }
   .iconbtn {
     flex:0 0 auto; width:38px; height:38px; padding:0; margin:0; border:0;
     border-radius:10px; background:var(--chip); color:var(--chipfg);
@@ -814,7 +821,7 @@ CSS = """
     background:var(--card); border-radius:14px; padding:14px 16px;
     margin-bottom:16px; box-shadow:var(--shadow);
   }
-  section:first-of-type { margin-top:22px; }
+  section:first-of-type { margin-top:20px; }
   h2 { margin:0 0 4px; }
   .sub { color:var(--muted); font-size:12.5px; line-height:1.4; margin:0 0 12px; }
 
@@ -856,6 +863,15 @@ CSS = """
     text-align:left; white-space:normal; min-width:150px;
   }
   tr.mine td { background:var(--mine); font-weight:600; }
+  .pos { color:var(--good); }
+  .neg { color:var(--bad); }
+
+  #card, #gtable { animation:fade .18s ease; }
+  @keyframes fade { from { opacity:0; } to { opacity:1; } }
+  @media (prefers-reduced-motion: reduce) {
+    #card, #gtable { animation:none; }
+    .iconbtn, .nav button, .actions a, footer a { transition:none; }
+  }
 
   .sharelabel { margin:22px 0 10px; }
   .actions { display:flex; gap:8px; margin-bottom:16px; }
@@ -874,6 +890,7 @@ CSS = """
     color:var(--muted); margin-top:26px;
   }
   footer p { margin:0; }
+  footer .subtitle { letter-spacing:.07em; }
   footer a { color:var(--muted); display:inline-block; margin-top:8px; }
 
   .iconbtn, .nav button, .actions a, footer a { transition:all .15s ease; }
@@ -935,11 +952,13 @@ function render() {
 
   jlabel.textContent = L.labels[i] || '';
   card.innerHTML = L.cards[i] || '';
+  card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
   prev.disabled = i <= 0;
   next.disabled = i >= L.labels.length - 1;
 
   glabel.textContent = L.gLabels[g] || '';
   gtable.innerHTML = L.gTables[g] || '';
+  gtable.style.animation = 'none'; void gtable.offsetWidth; gtable.style.animation = '';
   gprev.disabled = g <= 0;
   gnext.disabled = g >= L.gLabels.length - 1;
 
@@ -1034,9 +1053,26 @@ def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
     gLabels, gTables, gTexts = [], [], []
     for tb in standings.get("tables", []):
         head = "".join(f"<th>{esc(conv(h))}</th>" for h in tb["headers"])
+        # Sign the goal-difference column, which reads faster than +/- alone.
+        diff_at = next(
+            (i for i, h in enumerate(tb["headers"]) if norm(h) in ("dif", "gd")),
+            None,
+        )
+
+        def cell(text, i):
+            body = esc(val(text))
+            if i == diff_at:
+                n = text.strip().lstrip("+")
+                if re.fullmatch(r"-?\d+", n):
+                    if int(n) > 0:
+                        return f"<td><span class=pos>{body}</span></td>"
+                    if int(n) < 0:
+                        return f"<td><span class=neg>{body}</span></td>"
+            return f"<td>{body}</td>"
+
         rows = "".join(
             f"<tr{' class=mine' if any(matches(c, TEAM) for c in r) else ''}>"
-            + "".join(f"<td>{esc(val(c))}</td>" for c in r) + "</tr>"
+            + "".join(cell(c, i) for i, c in enumerate(r)) + "</tr>"
             for r in tb["rows"]
         )
         gLabels.append(conv(tb["group"]))
@@ -1100,54 +1136,84 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
     }
     script = JS.replace("__DATA__", json.dumps(data, ensure_ascii=False))
 
+    # First paint comes from the HTML, not from JavaScript, so there is no
+    # blank flash on a slow connection. render() then overwrites it identically.
+    D = data[default]
+    url = data["url"]
+    body = f"{D['head']}\n{D['texts'][start]}\n\n{D['gTexts'][gStart]}\n"
+    if url:
+        body += f"\n{url}\n"
+    mailto = ("mailto:?subject=" + quote(D["subject"]) + "&body=" + quote(body))
+    whats = "https://wa.me/?text=" + quote(body)
+    text_link = "sms:?body=" + quote(body)
+
+    blurb = " · ".join(
+        x for x in D["texts"][start].split("\n")[:4] if x.strip()
+    )[:180]
+    icon = f"{url}/icon.png" if url else "icon.png"
+
     PAGE.write_text(f"""<!doctype html>
 <html lang="{default}" data-digest="{fingerprint}">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{esc(NICK)}">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<meta name="theme-color" content="#f4f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1b2b" media="(prefers-color-scheme: dark)">
+<meta name="description" content="{esc(blurb)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{esc(SUBTITLE)}">
+<meta property="og:title" content="{esc(NICK)}">
+<meta property="og:description" content="{esc(blurb)}">
+<meta property="og:image" content="{esc(icon)}">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+{f'<meta property="og:url" content="{esc(url)}">' if url else ''}
+<meta name="twitter:card" content="summary">
 <title>{esc(NICK)}</title>
 <style>{CSS}</style>
 <main>
   <div class=top>
-    <div>
-      <h1>{esc(NICK)}</h1>
-      <p class=subtitle>{esc(SUBTITLE)}</p>
-      <p class=stamp id=stamp></p>
-    </div>
-    <button id=lang class=iconbtn></button>
+    <h1>{esc(NICK)}</h1>
+    <button id=lang class=iconbtn>{'EN' if default == 'es' else 'ES'}</button>
     <button id=theme class=iconbtn aria-label="theme"></button>
   </div>
 
   <section>
-    <h2 id=matchTitle></h2>
-    <p class=sub id=fxSub></p>
+    <h2 id=matchTitle>{esc(D['matchTitle'])}</h2>
+    <p class=sub id=fxSub>{esc(D['fxSub'])}</p>
     <div class=nav>
-      <button id=prev aria-label="previous">&lsaquo;</button>
-      <span class=label id=jlabel></span>
-      <button id=next aria-label="next">&rsaquo;</button>
+      <button id=prev aria-label="previous"{' disabled' if start <= 0 else ''}>&lsaquo;</button>
+      <span class=label id=jlabel>{esc(D['labels'][start] if D['labels'] else '')}</span>
+      <button id=next aria-label="next"{' disabled' if start >= len(D['labels']) - 1 else ''}>&rsaquo;</button>
     </div>
-    <div id=card></div>
+    <div id=card>{D['cards'][start] if D['cards'] else ''}</div>
   </section>
 
   <section>
-    <h2 id=tableTitle></h2>
-    <p class=sub id=stSub></p>
+    <h2 id=tableTitle>{esc(D['tableTitle'])}</h2>
+    <p class=sub id=stSub>{esc(D['stSub'])}</p>
     <div class=nav>
-      <button id=gprev aria-label="previous group">&lsaquo;</button>
-      <span class=label id=glabel></span>
-      <button id=gnext aria-label="next group">&rsaquo;</button>
+      <button id=gprev aria-label="previous group"{' disabled' if gStart <= 0 else ''}>&lsaquo;</button>
+      <span class=label id=glabel>{esc(D['gLabels'][gStart])}</span>
+      <button id=gnext aria-label="next group"{' disabled' if gStart >= len(D['gLabels']) - 1 else ''}>&rsaquo;</button>
     </div>
-    <div id=gtable></div>
+    <div id=gtable>{D['gTables'][gStart]}</div>
   </section>
 
-  <p class=sharelabel id=shareVia></p>
+  <p class=sharelabel id=shareVia>{esc(D['shareVia'])}</p>
   <div class=actions>
-    <a class=wa id=wa href="#"></a>
-    <a class=sms id=sms href="#"></a>
-    <a id=share href="#"></a>
+    <a class=wa id=wa href="{esc(whats)}">{esc(D['btnWa'])}</a>
+    <a class=sms id=sms href="{esc(text_link)}">{esc(D['btnSms'])}</a>
+    <a id=share href="{esc(mailto)}">{esc(D['btnMail'])}</a>
   </div>
 
   <footer>
+    <p class=subtitle>{esc(SUBTITLE)}</p>
+    <p class=stamp id=stamp>{esc(D['stamp'])}</p>
     <a href="https://ystpr.com/itinerario">ystpr.com</a>
   </footer>
 </main>
