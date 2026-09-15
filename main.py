@@ -337,6 +337,89 @@ async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
     return None
 
 
+_JS_DESCRIBE = """(stem) => {
+  const rx = new RegExp(stem, 'i');
+  const out = [];
+  document.querySelectorAll('*').forEach(el => {
+    if (el.children.length) return;                 // leaf elements only
+    const t = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (!t || t.length > 40 || !rx.test(t)) return;
+    const r = el.getBoundingClientRect();
+    const p = el.parentElement;
+    out.push({
+      text: t,
+      tag: el.tagName.toLowerCase(),
+      cls: String(el.className || '').slice(0, 70),
+      visible: !!(r.width && r.height),
+      parent: p ? p.tagName.toLowerCase() + '.' + String(p.className || '').slice(0, 60) : '',
+      html: p ? p.outerHTML.replace(/\\s+/g, ' ').slice(0, 300) : ''
+    });
+  });
+  return out.slice(0, 10);
+}"""
+
+
+async def describe(page, stem: str) -> None:
+    """Print what the picker for `stem` actually looks like in the DOM."""
+    try:
+        found = await page.evaluate(_JS_DESCRIBE, stem)
+    except Exception as e:
+        log(f"  (describe failed: {e})")
+        return
+    log(f"  --- elements matching '{stem}' ---")
+    for f in found:
+        log(f"    <{f['tag']} class='{f['cls']}'> visible={f['visible']}"
+            f" text='{f['text']}' parent={f['parent']}")
+        log(f"      {f['html']}")
+    log("  --- end ---")
+
+
+async def choose_in_dropdown(page, wanted: str, stem: str):
+    """Open a collapsed picker, then click the option inside it.
+
+    The site's pickers show the current value and hide the rest until the
+    trigger is clicked, so clicking the option directly does nothing.
+    """
+    exact = re.compile(rf"^\s*{re.escape(wanted)}\s*$", re.I)
+    trigs = page.locator(
+        "button, [role=button], [role=combobox], [aria-haspopup], "
+        "[data-toggle=dropdown], .dropdown-toggle, summary, select"
+    )
+    try:
+        total = await trigs.count()
+    except Exception:
+        return None
+
+    for i in range(min(total, 30)):
+        trig = trigs.nth(i)
+        try:
+            text = " ".join((await trig.inner_text()).split())
+        except Exception:
+            continue
+        if stem not in norm(text):
+            continue
+        try:
+            await trig.click(timeout=2000)
+        except Exception:
+            continue
+        await page.wait_for_timeout(450)
+
+        opt = page.get_by_text(exact)
+        try:
+            if await opt.count():
+                await opt.first.click(timeout=2000)
+                await settle(page)
+                log(f"  opened '{text[:30]}' then picked '{wanted}'")
+                return wanted
+        except Exception:
+            pass
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
+    return None
+
+
 async def option_labels(page, keyword: str) -> list[str]:
     """Every option mentioning `keyword`, in the site's own order."""
     selects = page.locator("select")
@@ -611,9 +694,13 @@ async def get_fixtures(page) -> list[dict]:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not await choose(page, label):
+        picked = (await choose_in_dropdown(page, label, "jornada")
+                  or await choose(page, label))
+        if not picked:
             log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
             bad += 1
+            if n == 2:
+                await describe(page, "jornada")
             continue
         division = await choose(page, DIVISION, quiet=True)
         group = await choose(page, GROUP, quiet=True)
@@ -636,6 +723,7 @@ async def get_fixtures(page) -> list[dict]:
                 f" the selection did not take")
             verified = False
             bad += 1
+            await describe(page, "jornada")
         elif sig:
             seen[sig] = label
 
@@ -682,7 +770,8 @@ async def get_results(page, wanted: set) -> dict:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not await choose(page, label, quiet=True):
+        if not (await choose_in_dropdown(page, label, "jornada")
+                or await choose(page, label, quiet=True)):
             log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
             continue
         await choose(page, DIVISION, quiet=True)
