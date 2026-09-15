@@ -600,7 +600,15 @@ async def get_fixtures(page) -> list[dict]:
 
     out, bad = [], 0
     for n, label in enumerate(labels, 1):
+        # Selecting a jornada collapses the picker, so reload to get it back.
+        if n > 1:
+            await page.goto(SCHEDULE_URL, wait_until="domcontentloaded")
+            await settle(page, 1800)
+            await choose(page, TOURNAMENT, quiet=True)
+
         if not await choose(page, label, quiet=True):
+            log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
+            bad += 1
             continue
         division = await choose(page, DIVISION, quiet=True)
         group = await choose(page, GROUP, quiet=True)
@@ -627,7 +635,9 @@ async def get_fixtures(page) -> list[dict]:
             f" | {group or 'GROUP NOT SET'} | {'match' if hits else 'no match'}")
 
     if bad:
-        log(f"  !! {bad} of {len(out)} jornadas could not confirm the filters")
+        log(f"  !! {bad} of {len(labels)} jornadas failed to select or verify")
+    if len(out) < len(labels):
+        log(f"  !! walked {len(out)} of {len(labels)} jornadas")
     await dump(page, "schedule")
     return out
 
@@ -650,7 +660,13 @@ async def get_results(page, wanted: set) -> dict:
 
     out = {}
     for n, label in enumerate(labels, 1):
+        if n > 1:
+            await page.goto(RESULTS_URL, wait_until="domcontentloaded")
+            await settle(page, 1800)
+            await choose(page, TOURNAMENT, quiet=True)
+
         if not await choose(page, label, quiet=True):
+            log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
             continue
         await choose(page, DIVISION, quiet=True)
         await choose(page, GROUP, quiet=True)
