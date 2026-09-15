@@ -43,9 +43,15 @@ PAGE = Path("index.html")
 STATE = Path("state.json")
 AST = timezone(timedelta(hours=-4))  # Puerto Rico, no daylight saving
 
+# Abbreviated to four letters or fewer. Months already that short are left
+# whole, which is the convention in both languages.
 MESES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    "ene.", "feb.", "mar.", "abr.", "mayo", "jun.",
+    "jul.", "ago.", "sept.", "oct.", "nov.", "dic.",
+]
+MONTHS = [
+    "Jan.", "Feb.", "Mar.", "Apr.", "May", "June",
+    "July", "Aug.", "Sept.", "Oct.", "Nov.", "Dec.",
 ]
 
 ES = {
@@ -72,7 +78,9 @@ EN = {
 # Spanish terms the site uses, for the English view. Anything not listed is
 # left exactly as scraped, which is right for team names and venues.
 TERMS = {
-    "fecha": "Date", "hora": "Time", "local": "Home", "visitante": "Away",
+    "fecha": "Date", "dia": "Date", "partido": "Match", "posicion": "Rank",
+    "oponente": "Opponent",
+    "pos": "Rank", "hora": "Time", "local": "Home", "visitante": "Away",
     "cancha": "Field", "sede": "Venue", "estatus": "Status", "estado": "Status",
     "arbitro": "Referee", "equipo": "Team", "grupo": "Group",
     "jornada": "Matchday", "division": "Division", "resultado": "Result",
@@ -140,16 +148,41 @@ def log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 
+def long_date(d, lang: str) -> str:
+    """14 de septiembre de 2026 / September 14, 2026."""
+    if lang.startswith("es"):
+        return f"{d.day} de {MESES[d.month - 1]} de {d.year}"
+    return f"{MONTHS[d.month - 1]} {d.day}, {d.year}"
+
+
 def stamp(lang: str = "") -> str:
     lang = lang or LANG
     now = datetime.now(AST)
     hour = now.hour % 12 or 12
+    when = long_date(now, lang)
     if lang.startswith("es"):
         ampm = "a. m." if now.hour < 12 else "p. m."
-        return (f"Actualizado: {now.day} de {MESES[now.month - 1]} de {now.year}"
-                f", {hour}:{now.minute:02d} {ampm}")
-    return (f"As of: {now:%B} {now.day}, {now.year}, "
-            f"{hour}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'}")
+        return f"Actualizado: {when}, {hour}:{now.minute:02d} {ampm}"
+    ampm = "AM" if now.hour < 12 else "PM"
+    return f"Updated: {when}, {hour}:{now.minute:02d} {ampm}"
+
+
+def date_only(text: str):
+    """The date, when the whole cell is nothing but a date."""
+    t = (text or "").strip()
+    if not re.fullmatch(r"\d{1,4}[/-]\d{1,2}[/-]\d{2,4}", t):
+        return None
+    return parse_date(t)
+
+
+def value_conv(lang: str):
+    """Render a scraped cell: long-form dates, then vocabulary."""
+    def convert(text: str) -> str:
+        d = date_only(text)
+        if d:
+            return long_date(d, lang)
+        return text if lang.startswith("es") else to_en(text)
+    return convert
 
 
 def esc(s: str) -> str:
@@ -437,6 +470,34 @@ def parse_table(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
     return header, data
 
 
+# "A vs B", however the site writes the separator.
+VERSUS = re.compile(r"\s+(?:vs\.?|v\.?|contra)\s+", re.I)
+
+
+def opponent(value: str):
+    """The other team, from a cell holding both. None if it isn't one."""
+    parts = [p.strip() for p in VERSUS.split(value or "") if p.strip()]
+    if len(parts) != 2:
+        return None
+    ours = [p for p in parts
+            if matches(p, TEAM) or "surf guaynabo" in norm(p)]
+    if len(ours) != 1:
+        return None
+    return next(p for p in parts if p is not ours[0])
+
+
+def fixture_rows(entry: dict) -> list[tuple[str, str]]:
+    """Header/value pairs, with the both-teams cell reduced to the opponent."""
+    out = []
+    for head, value in pairs(entry.get("headers", []), entry.get("row", [])):
+        other = opponent(value)
+        if other:
+            out.append((like(head, "Oponente") if head else "Oponente", other))
+        else:
+            out.append((head, value))
+    return out
+
+
 def pairs(headers: list[str], row: list[str]) -> list[tuple[str, str]]:
     return [
         (headers[i].strip() if i < len(headers) else "", v.strip())
@@ -665,17 +726,18 @@ async def scrape():
 # ----------------------------------------------------------------- share text
 
 
-def fixture_text(entry: dict, t: dict, label: str = "", conv=None) -> str:
+def fixture_text(entry: dict, t: dict, label: str = "", conv=None, val=None) -> str:
     """One jornada, short enough to read in a chat bubble."""
     conv = conv or (lambda x: x)
+    val = val or conv
     lines = [label or conv(entry["jornada"])]
     if not entry.get("verified", True):
         lines.append(f"({t['unverified']})")
     if not entry.get("row"):
         return "\n".join(lines + [t["none"]])
 
-    for head, value in pairs(entry.get("headers", []), entry["row"]):
-        head, value = conv(head), conv(value)
+    for head, value in fixture_rows(entry):
+        head, value = conv(head), val(value)
         lines.append(f"{head}: {value}" if head else value)
     summary = result_summary(entry.get("result") or {})
     if summary:
@@ -700,8 +762,8 @@ def standings_text(table: dict, t: dict, conv=None) -> str:
 CSS = """
   :root {
     --bg:#f4f6f8; --fg:#10202e; --muted:#5d7080; --card:#fff;
-    --line:#eef1f4; --mine:#eaf1fd; --chip:#eef1f4; --chipfg:#10202e;
-    --btn:#10202e; --wa:#1f9d5b; --sms:#2f6fed;
+    --line:#eef1f4; --mine:#eaf1fd; --chip:#eef1f4; --chiphi:#dfe5ea;
+    --chipfg:#10202e; --btn:#10202e; --wa:#1f9d5b; --sms:#2f6fed;
     --warnfg:#8a4b00; --warnbg:#fdf1e0; --shadow:0 1px 3px rgba(16,32,46,.10);
   }
   :root[data-theme=dark],
@@ -711,14 +773,16 @@ CSS = """
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme=light]) {
       --bg:#0b1b2b; --fg:#e8eef4; --muted:#90a6b8; --card:#14293c;
-      --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chipfg:#e8eef4;
-      --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12; --shadow:none;
+      --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chiphi:#2a4a6b;
+      --chipfg:#e8eef4; --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12;
+      --shadow:none;
     }
   }
   :root[data-theme=dark] {
     --bg:#0b1b2b; --fg:#e8eef4; --muted:#90a6b8; --card:#14293c;
-    --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chipfg:#e8eef4;
-    --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12; --shadow:none;
+    --line:#1e3752; --mine:#1d3f63; --chip:#1e3752; --chiphi:#2a4a6b;
+    --chipfg:#e8eef4; --btn:#2f6fed; --warnfg:#ffcf93; --warnbg:#3a2a12;
+    --shadow:none;
   }
 
   * { box-sizing:border-box; }
@@ -736,6 +800,7 @@ CSS = """
     color:var(--muted); font-weight:600;
   }
   .subtitle { margin:0; }
+  .stamp { color:var(--muted); font-size:12.5px; line-height:1.4; margin:3px 0 0; }
   .iconbtn {
     flex:0 0 auto; width:38px; height:38px; padding:0; margin:0; border:0;
     border-radius:10px; background:var(--chip); color:var(--chipfg);
@@ -810,6 +875,15 @@ CSS = """
   }
   footer p { margin:0; }
   footer a { color:var(--muted); display:inline-block; margin-top:8px; }
+
+  .iconbtn, .nav button, .actions a, footer a { transition:all .15s ease; }
+  @media (hover: hover) {
+    .iconbtn:hover, .nav button:not(:disabled):hover { background:var(--chiphi); }
+    .actions a:hover { filter:brightness(1.12); }
+    footer a:hover { color:var(--fg); }
+    tr.mine:hover td, tbody tr:hover td { background:var(--line); }
+    tr.mine:hover td { background:var(--mine); }
+  }
 """
 
 JS = """
@@ -931,7 +1005,8 @@ def our_group(standings: dict) -> dict:
 def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
     """Everything the page shows, rendered in one language."""
     t = ES if lang == "es" else EN
-    conv = (lambda x: x) if lang == "es" else to_en
+    conv = (lambda x: x) if lang == "es" else to_en   # headers, labels
+    val = value_conv(lang)                            # scraped cell values
 
     upcoming = upcoming_index(fixtures)
     labels = [
@@ -945,8 +1020,8 @@ def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
         if f["row"]:
             body += "".join(
                 f"<div class=row><span class=k>{esc(conv(h))}</span>"
-                f"<span class=v>{esc(conv(v))}</span></div>"
-                for h, v in pairs(f["headers"], f["row"])
+                f"<span class=v>{esc(val(v))}</span></div>"
+                for h, v in fixture_rows(f)
             )
             summary = result_summary(f["result"])
             if summary:
@@ -961,7 +1036,7 @@ def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
         head = "".join(f"<th>{esc(conv(h))}</th>" for h in tb["headers"])
         rows = "".join(
             f"<tr{' class=mine' if any(matches(c, TEAM) for c in r) else ''}>"
-            + "".join(f"<td>{esc(conv(c))}</td>" for c in r) + "</tr>"
+            + "".join(f"<td>{esc(val(c))}</td>" for c in r) + "</tr>"
             for r in tb["rows"]
         )
         gLabels.append(conv(tb["group"]))
@@ -980,7 +1055,7 @@ def build_variant(fixtures: list, standings: dict, lang: str) -> dict:
     return {
         "labels": labels,
         "cards": cards,
-        "texts": [fixture_text(f, t, labels[i], conv)
+        "texts": [fixture_text(f, t, labels[i], conv, val)
                   for i, f in enumerate(fixtures)],
         "gLabels": gLabels,
         "gTables": gTables,
@@ -1037,6 +1112,7 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
     <div>
       <h1>{esc(NICK)}</h1>
       <p class=subtitle>{esc(SUBTITLE)}</p>
+      <p class=stamp id=stamp></p>
     </div>
     <button id=lang class=iconbtn></button>
     <button id=theme class=iconbtn aria-label="theme"></button>
@@ -1072,7 +1148,6 @@ def write_page(fixtures: list, standings: dict, fingerprint: str) -> None:
   </div>
 
   <footer>
-    <p id=stamp></p>
     <a href="https://ystpr.com/itinerario">ystpr.com</a>
   </footer>
 </main>
@@ -1136,6 +1211,7 @@ def notify(fixtures: list, standings: dict) -> None:
     """
     t = ES if LANG.startswith("es") else EN
     conv = (lambda x: x) if LANG.startswith("es") else to_en
+    val = value_conv(LANG)
 
     now, before = snapshot(fixtures, standings), load_state()
     STATE.write_text(json.dumps(now, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1160,7 +1236,7 @@ def notify(fixtures: list, standings: dict) -> None:
     i = upcoming_index(fixtures)
     if i is not None:
         label = f"{conv(fixtures[i]['jornada'])} ({t['next']})"
-        lines += [fixture_text(fixtures[i], t, label, conv), ""]
+        lines += [fixture_text(fixtures[i], t, label, conv, val), ""]
     if moved:
         lines += [standings_text(our_group(standings), t, conv), ""]
     url = page_url()
