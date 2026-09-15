@@ -306,21 +306,26 @@ async def choose(page, wanted: str, latest: bool = False, quiet: bool = False):
         except Exception:
             pass
 
-    bits = page.locator("li, a, button, td, th, div[role], span, p, label")
-    try:
-        texts = await bits.all_inner_texts()
-    except Exception:
-        texts = []
-    hits = [(j, x) for j, x in enumerate(texts) if x.strip() and matches(x, wanted)]
-    if hits:
-        # Shortest match is the label itself, not a wrapper around it.
-        hits.sort(key=lambda h: (-_rank(h[1]), len(h[1])) if latest else (len(h[1]),))
+    # Interactive tags first: clicking a <span> often does nothing at all.
+    for selector in ("a, button, li, [role=option], [role=tab], [role=button]",
+                     "td, th, div[role], span, p, label, div"):
+        bits = page.locator(selector)
+        try:
+            texts = await bits.all_inner_texts()
+        except Exception:
+            continue
+        hits = [(j, x) for j, x in enumerate(texts) if x.strip() and matches(x, wanted)]
+        if not hits:
+            continue
+        # Exact label beats a wrapper that merely contains it.
+        hits.sort(key=lambda h: (-_rank(h[1]),) if latest else
+                  (norm(h[1]) != norm(wanted), len(h[1])))
         for idx, text in hits[:4]:
             try:
                 await bits.nth(idx).click(timeout=2000)
                 await settle(page)
                 if not quiet:
-                    log(f"  clicked text '{text.strip()[:60]}'")
+                    log(f"  clicked <{selector.split(',')[0]}> '{text.strip()[:50]}'")
                 return text.strip()
             except Exception:
                 continue
@@ -598,7 +603,7 @@ async def get_fixtures(page) -> list[dict]:
         return []
     log(f"  {len(labels)} jornadas to walk")
 
-    out, bad = [], 0
+    out, bad, seen = [], 0, {}
     for n, label in enumerate(labels, 1):
         # Selecting a jornada collapses the picker, so reload to get it back.
         if n > 1:
@@ -606,7 +611,7 @@ async def get_fixtures(page) -> list[dict]:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not await choose(page, label, quiet=True):
+        if not await choose(page, label):
             log(f"  [{n}/{len(labels)}] {label}: !! could not select this jornada")
             bad += 1
             continue
@@ -622,6 +627,18 @@ async def get_fixtures(page) -> list[dict]:
 
         rows = await read_cells(page)
         hits = our_rows(rows)
+
+        # A click that changes nothing still "succeeds", so compare the result
+        # against what earlier jornadas returned.
+        sig = norm(" ".join(hits[0])) if hits else ""
+        if sig and sig in seen:
+            log(f"  [{n}/{len(labels)}] {label}: !! identical to {seen[sig]},"
+                f" the selection did not take")
+            verified = False
+            bad += 1
+        elif sig:
+            seen[sig] = label
+
         out.append({
             "jornada": label,
             "headers": header_row(rows, hits[0]) if hits else [],
