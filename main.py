@@ -464,9 +464,19 @@ async def select_jornada(page, label: str) -> bool:
     Kendo flips aria-pressed on click, but the table re-renders separately,
     so a pressed button alone does not mean the data on screen changed.
     """
+    tabs = await jornada_tabs(page)
+    if not tabs:
+        # No toggle group on this page: fall back to a plain click.
+        got = await choose(page, label, quiet=True)
+        await settle(page)
+        return bool(got)
+
+    # Only trust aria-pressed if this page actually sets it.
+    verifiable = any(t["pressed"] for t in tabs)
     before_sig = await table_sig(page)
-    before_active = await active_jornada(page)
-    already = norm(before_active) == norm(label)
+    already = norm(await active_jornada(page)) == norm(label)
+    if not verifiable and len(tabs) == 1:
+        already = True
 
     exact = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
     try:
@@ -482,11 +492,13 @@ async def select_jornada(page, label: str) -> bool:
     # Poll rather than sleep a fixed amount: the re-render is asynchronous.
     for _ in range(16):
         await page.wait_for_timeout(500)
-        pressed = norm(await active_jornada(page)) == norm(label)
+        pressed = (not verifiable
+                   or norm(await active_jornada(page)) == norm(label))
         if pressed and (already or await table_sig(page) != before_sig):
             return True
 
     log(f"  '{label}' did not take: active='{await active_jornada(page)}',"
+        f" verifiable={verifiable}, already={already},"
         f" table changed={await table_sig(page) != before_sig}")
     return False
 
