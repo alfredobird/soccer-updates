@@ -446,20 +446,48 @@ async def jornada_tabs(page) -> list[dict]:
         return []
 
 
+async def table_sig(page) -> str:
+    rows = await read_cells(page)
+    return norm(" | ".join(" ".join(r) for r in rows))[:400]
+
+
+async def active_jornada(page) -> str:
+    for tab in await jornada_tabs(page):
+        if tab["pressed"]:
+            return tab["text"]
+    return ""
+
+
 async def select_jornada(page, label: str) -> bool:
-    """Click a jornada button and confirm it actually became the active one."""
+    """Click a jornada button, then wait for the view to actually follow.
+
+    Kendo flips aria-pressed on click, but the table re-renders separately,
+    so a pressed button alone does not mean the data on screen changed.
+    """
+    before_sig = await table_sig(page)
+    before_active = await active_jornada(page)
+    already = norm(before_active) == norm(label)
+
     exact = re.compile(rf"^\s*{re.escape(label)}\s*$", re.I)
     try:
         btn = page.get_by_role("button", name=exact)
-        if await btn.count():
-            await btn.first.click(timeout=3000)
-            await settle(page)
-    except Exception:
-        pass
+        if not await btn.count():
+            log(f"  no button found for '{label}'")
+            return False
+        await btn.first.click(timeout=3000)
+    except Exception as e:
+        log(f"  could not click '{label}': {e}")
+        return False
 
-    for tab in await jornada_tabs(page):
-        if norm(tab["text"]) == norm(label):
-            return bool(tab["pressed"])
+    # Poll rather than sleep a fixed amount: the re-render is asynchronous.
+    for _ in range(16):
+        await page.wait_for_timeout(500)
+        pressed = norm(await active_jornada(page)) == norm(label)
+        if pressed and (already or await table_sig(page) != before_sig):
+            return True
+
+    log(f"  '{label}' did not take: active='{await active_jornada(page)}',"
+        f" table changed={await table_sig(page) != before_sig}")
     return False
 
 
@@ -746,14 +774,17 @@ async def get_fixtures(page) -> list[dict]:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not await select_jornada(page, label):
-            log(f"  [{n}/{len(labels)}] {label}: !! never became active, skipping")
-            bad += 1
-            await describe(page, "jornada")
-            continue
+        # Division and group first: selecting them resets the jornada.
         division = await choose(page, DIVISION, quiet=True)
         group = await choose(page, GROUP, quiet=True)
         await settle(page, 900)
+
+        if not await select_jornada(page, label):
+            log(f"  [{n}/{len(labels)}] {label}: !! view never switched, skipping")
+            bad += 1
+            if n == 2:
+                await describe(page, "jornada")
+            continue
 
         # A silent fallback would show another group and look perfectly normal,
         # so record whether the filters really took.
@@ -821,12 +852,13 @@ async def get_results(page, wanted: set) -> dict:
             await settle(page, 1800)
             await choose(page, TOURNAMENT, quiet=True)
 
-        if not await select_jornada(page, label):
-            log(f"  [{n}/{len(labels)}] {label}: !! never became active, skipping")
-            continue
         await choose(page, DIVISION, quiet=True)
         await choose(page, GROUP, quiet=True)
         await settle(page, 900)
+
+        if not await select_jornada(page, label):
+            log(f"  [{n}/{len(labels)}] {label}: !! view never switched, skipping")
+            continue
 
         rows = await read_nodes(page)
         if not rows:
