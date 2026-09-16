@@ -1,7 +1,12 @@
 # Surf Guaynabo U10 Black
 
 A phone-friendly page showing this team's fixtures, results and group
-standings, scraped from [ystpr.com](https://ystpr.com) every 30 minutes.
+standings, scraped from [ystpr.com](https://ystpr.com).
+
+The workflow asks for every 30 minutes, but GitHub's scheduler deprioritises
+frequent crons and in practice delivers roughly one run every one to two hours.
+That is platform behaviour, not a bug, and it is fine here: fixtures change a
+couple of times a week, and email alerts fire on the run that spots a change.
 
 The page is rebuilt on every run so the `Actualizado` line always reflects the
 last check, not the last change. Commits are labelled `data:` when the
@@ -21,8 +26,9 @@ Pages serves the result.
 - **Tabla de posiciones** opens on our group, with our row highlighted.
   Arrows page through the other groups.
 - **Compartir vía** builds a short plain-text summary of whatever is on
-  screen and hands it to WhatsApp, Messages or email. Nothing is ever sent
-  automatically.
+  screen and hands it to WhatsApp, Messages or email. It carries the team name,
+  the jornada on screen, the group order and the page link. No timestamp, since
+  the link has a current one. Nothing is ever sent automatically.
 - Two buttons sit top right. **Light/dark** follows the phone's setting until
   you override it. **EN/ES** switches the page language. Both choices are
   remembered separately on that device.
@@ -107,14 +113,24 @@ carries the birth year. They differ, and that's correct.
 
 ## How it avoids showing you the wrong data
 
-The site's pickers aren't `<select>` elements, and a failed selection leaves
-the previous group on screen rather than raising an error. That looks normal
-and is wrong. So every run records which filters actually took:
+The site is an Angular app using Kendo UI controls. None of the pickers are
+`<select>` elements, and a failed selection leaves the previous view on screen
+rather than raising an error. A click that changes nothing still looks like a
+successful click. So nothing is taken on trust:
 
-- the run log prints the division and group per jornada
-- the page shows them under each heading
-- any jornada whose filters couldn't be confirmed gets an amber warning, on
-  the page and in the shared text
+- **Jornada.** The picker is a Kendo toggle-button group. After clicking, the
+  run waits for the button to report `aria-pressed` *and* for the table content
+  to actually change. Pressed alone isn't enough, because the button and the
+  table re-render separately. A jornada that never switches is left out of the
+  page entirely rather than shown with stale data under the wrong name.
+- **Division and group.** Recorded per jornada and printed in the log, and
+  shown on the page under each heading. A jornada that returns a row identical
+  to one already seen is dropped, since that means the filter didn't apply.
+- Anything that couldn't be confirmed gets an amber warning on the page and in
+  the shared text.
+
+Order matters here: division and group are selected *before* the jornada,
+because selecting them resets the jornada back to the first one.
 
 ## When it breaks
 
@@ -122,6 +138,27 @@ It will, because it depends on someone else's layout. The symptom is a stale
 `Actualizado` line or missing rows. Open the failed run on the Actions tab and
 download the `debug` artifact: a screenshot and text dump of each page. When a
 selection fails, the log also prints every option that was visible at the time.
+
+Read the jornada lines in the log. There is one per jornada and they are
+numbered, so `[1/2]` followed by nothing means the walk stopped early. The run
+also prints an explicit warning when it walks fewer jornadas than it found, or
+when it cannot confirm the division and group on one. A run can finish green
+while having done half the work, and these lines are how you catch that.
+
+When a jornada fails to switch, the log says which check failed, for example
+`'Jornada 2' did not take: active='Jornada 1', verifiable=True, already=False,
+table changed=False`. `active` naming the wrong jornada means the click was
+reset by something else. `active` naming the right one with `table changed=False`
+means the button works but the view didn't re-render. Those need different
+fixes, which is why both are printed.
+
+### Why a run takes a few minutes
+
+The scraper reloads the page before each jornada rather than reusing a DOM the
+app has already re-rendered, and after clicking it polls for up to eight seconds
+for the table to change instead of sleeping a fixed amount. That is three page
+walks per run, one per jornada on two of them. Slower than it looks like it
+should be, and deliberately so: the shortcuts silently produced wrong data.
 
 ## Cost
 
